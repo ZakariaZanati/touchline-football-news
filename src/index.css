@@ -1,0 +1,83 @@
+@import 'tailwindcss';
+
+/* Tailwind 4 keeps design tokens in CSS. `dark:` is driven by a class on
+   <html> rather than the OS setting, so the in-app toggle can override it. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --font-sans:
+    'Inter var', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto,
+    'Helvetica Neue', sans-serif;
+
+  /* Pitch-green accent — enough to feel like football without being a costume. */
+  --color-pitch-50: #edfcf3;
+  --color-pitch-100: #d4f7e2;
+  --color-pitch-200: #a7edc8;
+  --color-pitch-300: #6fdda6;
+  --color-pitch-400: #33c47f;
+  --color-pitch-500: #10a862;
+  --color-pitch-600: #05874e;
+  --color-pitch-700: #056c41;
+  --color-pitch-800: #075536;
+  --color-pitch-900: #07462e;
+
+  /* Warm-neutral ink so long reading doesn't feel like a spreadsheet. */
+  --color-ink-50: #f7f8f7;
+  --color-ink-100: #eef0ef;
+  --color-ink-200: #dcdfdd;
+  --color-ink-300: #b9bebb;
+  --color-ink-400: #8b928e;
+  --color-ink-500: #6b726e;
+  --color-ink-600: #545a57;
+  --color-ink-700: #444947;
+  --color-ink-800: #2a2f2d;
+  --color-ink-900: #1a1f1d;
+  --color-ink-950: #0e1211;
+}
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    @apply bg-ink-50 text-ink-900 antialiased;
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'ss01';
+  }
+
+  .dark body {
+    @apply bg-ink-950 text-ink-100;
+  }
+
+  /* Visible focus for keyboard users, invisible for mouse users. */
+  :focus-visible {
+    @apply outline-2 outline-offset-2 outline-pitch-500;
+  }
+
+  ::selection {
+    @apply bg-pitch-300/40;
+  }
+}
+
+@layer utilities {
+  .story-enter {
+    animation: story-in 0.32s cubic-bezier(0.16, 1, 0.3, 1) backwards;
+  }
+
+  @keyframes story-in {
+    from {
+      opacity: 0;
+      transform: translateY(6px);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .story-enter {
+      animation: none;
+    }
+    html {
+      scroll-behavior: auto;
+    }
+  }
+}
