@@ -1,7 +1,12 @@
 import { useState } from 'react';
 import type { ReactNode } from 'react';
 
-import type { Story } from '../../shared/types.ts';
+import type { Language, Story } from '../../shared/types.ts';
+
+const LANGUAGE_LABELS: Record<Language, string> = {
+  en: 'English',
+  es: 'Español',
+};
 import {
   timeAgo,
   duration,
@@ -13,11 +18,14 @@ import {
 interface ChipProps {
   children: ReactNode;
   className?: string;
+  /** Native tooltip, for chips whose meaning isn't obvious from the label. */
+  title?: string;
 }
 
-function Chip({ children, className = '' }: ChipProps) {
+function Chip({ children, className = '', title }: ChipProps) {
   return (
     <span
+      title={title}
       className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium ring-1 ring-inset ${className}`}
     >
       {children}
@@ -57,6 +65,17 @@ export default function StoryCard({ story, index }: StoryCardProps) {
         {story.competition && (
           <Chip className="bg-ink-500/10 text-ink-600 ring-ink-500/20 dark:text-ink-300">
             {story.competition}
+          </Chip>
+        )}
+
+        {/* Only shown when we failed to bring it into English — a translated
+            story is just a story, and does not need announcing. */}
+        {story.language !== 'en' && (
+          <Chip
+            className="bg-amber-500/12 text-amber-700 ring-amber-500/25 dark:text-amber-300"
+            title={`Summarised in ${LANGUAGE_LABELS[story.language] ?? story.language} — set an API key to get English summaries`}
+          >
+            {LANGUAGE_LABELS[story.language] ?? story.language}
           </Chip>
         )}
 

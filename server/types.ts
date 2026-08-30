@@ -8,7 +8,14 @@
  *
  * The shapes the *client* sees live in `shared/types.ts`.
  */
-import type { Coverage, SummaryEngine, TopicId } from '../shared/types.ts';
+import type {
+  ClubRef,
+  CountryId,
+  Coverage,
+  Language,
+  SummaryEngine,
+  TopicId,
+} from '../shared/types.ts';
 
 export interface Source {
   id: string;
@@ -16,6 +23,10 @@ export interface Source {
   url: string;
   /** Breaks ties when several outlets report the same story. */
   trust: number;
+  /** Where the outlet is based — not necessarily what it writes about. */
+  country: CountryId;
+  /** The language its articles are in. Used as a fallback when extraction fails. */
+  language: Language;
 }
 
 /** A story as it comes off a feed, before the article page is fetched. */
@@ -32,6 +43,8 @@ export interface FeedStory {
   image: string | null;
   categories: string[];
   unsummarisable: boolean;
+  /** Inherited from the feed; replaced by detection once a body is extracted. */
+  language: Language;
 }
 
 /** A feed story with the article body attached, or its RSS summary as backup. */
@@ -43,13 +56,19 @@ export interface ExtractedStory extends FeedStory {
   stub: boolean;
 }
 
+/** A story with its clubs and countries resolved against the registry. */
+export interface TaggedStory extends ExtractedStory {
+  clubs: ClubRef[];
+  countries: CountryId[];
+}
+
 /** Coverage carries a timestamp internally; the client doesn't need it. */
 export interface ClusterCoverage extends Coverage {
   publishedAt: number;
 }
 
 /** The representative story for a cluster of reports about the same event. */
-export interface ClusteredStory extends ExtractedStory {
+export interface ClusteredStory extends TaggedStory {
   coverage: ClusterCoverage[];
   sourceCount: number;
 }
@@ -65,9 +84,12 @@ export interface Summary {
   keyFacts: string[];
   topic: TopicId;
   competition: string | null;
-  clubs?: string[];
   importance?: number;
   engine: SummaryEngine;
+  /** The language the summary text is written in. */
+  language: Language;
+  /** True once a translator has rewritten it out of its source language. */
+  translated: boolean;
 }
 
 export interface SummarisedStory extends ClusteredStory {

@@ -7,10 +7,16 @@ import { SkeletonList, EmptyState, ErrorState } from './components/States.tsx';
 import { useNews } from './hooks/useNews.ts';
 import { fetchSources } from './api.ts';
 import { duration } from './lib/format.ts';
-import type { SourceInfo } from '../shared/types.ts';
+import type { ClubInfo, Country, SourceInfo } from '../shared/types.ts';
 import type { Filters } from './types.ts';
 
-const DEFAULT_FILTERS: Filters = { topic: 'all', source: 'all', q: '' };
+const DEFAULT_FILTERS: Filters = {
+  topic: 'all',
+  source: 'all',
+  country: 'all',
+  club: 'all',
+  q: '',
+};
 
 function useTheme(): [boolean, () => void] {
   const [dark, setDark] = useState(() =>
@@ -32,6 +38,8 @@ function useTheme(): [boolean, () => void] {
 export default function App() {
   const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
   const [sources, setSources] = useState<SourceInfo[]>([]);
+  const [countries, setCountries] = useState<Country[]>([]);
+  const [clubs, setClubs] = useState<ClubInfo[]>([]);
   const [dark, toggleTheme] = useTheme();
 
   const { stories, meta, status, error, refreshing, refresh, reload } =
@@ -40,9 +48,13 @@ export default function App() {
   useEffect(() => {
     const controller = new AbortController();
     fetchSources(controller.signal)
-      .then((data) => setSources(data.sources))
+      .then((data) => {
+        setSources(data.sources);
+        setCountries(data.countries);
+        setClubs(data.clubs);
+      })
       .catch(() => {
-        // Non-fatal: the source dropdown just stays empty.
+        // Non-fatal: the dropdowns just stay empty.
       });
     return () => controller.abort();
   }, []);
@@ -52,7 +64,11 @@ export default function App() {
   }, []);
 
   const hasFilters =
-    filters.topic !== 'all' || filters.source !== 'all' || filters.q !== '';
+    filters.topic !== 'all' ||
+    filters.source !== 'all' ||
+    filters.country !== 'all' ||
+    filters.club !== 'all' ||
+    filters.q !== '';
 
   // The headline claim of the app, made concrete.
   const totalSaved = useMemo(
@@ -75,6 +91,8 @@ export default function App() {
           filters={filters}
           onChange={updateFilters}
           sources={sources}
+          countries={countries}
+          clubs={clubs}
         />
 
         <div className="mt-5">

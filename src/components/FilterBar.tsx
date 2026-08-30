@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
-import type { SourceInfo } from '../../shared/types.ts';
+import type { ClubInfo, Country, SourceInfo } from '../../shared/types.ts';
 import type { Filters, TopicFilter } from '../types.ts';
 
 const ALL_TOPICS: { id: TopicFilter; label: string }[] = [
@@ -13,20 +13,44 @@ const ALL_TOPICS: { id: TopicFilter; label: string }[] = [
   { id: 'club', label: 'Club' },
 ];
 
+/** Shared styling for the three registry dropdowns. */
+const SELECT_CLASS =
+  'min-w-0 flex-1 rounded-lg border border-ink-200 bg-white px-3 py-2 text-sm text-ink-700 focus:border-pitch-500 focus:outline-none sm:flex-none dark:border-ink-800 dark:bg-ink-900 dark:text-ink-200';
+
 interface FilterBarProps {
   filters: Filters;
   onChange: (patch: Partial<Filters>) => void;
   sources: SourceInfo[];
+  countries: Country[];
+  clubs: ClubInfo[];
 }
 
 export default function FilterBar({
   filters,
   onChange,
   sources,
+  countries,
+  clubs,
 }: FilterBarProps) {
   // Local mirror so typing stays responsive; the debounce below is what
   // actually reaches the API.
   const [draft, setDraft] = useState(filters.q);
+
+  // Picking a country narrows the club list to that country's clubs — the full
+  // registry is ~70 entries, which is a long dropdown to scroll for one club.
+  //
+  // Sorted for the reader, not left in registry order: the registry is grouped
+  // by country because that is how it is maintained, which is no help at all
+  // when you are hunting for one name in a dropdown. localeCompare so that
+  // "Alavés" files under A rather than after Z.
+  const clubOptions = useMemo(
+    () =>
+      (filters.country === 'all'
+        ? [...clubs]
+        : clubs.filter((c) => c.country === filters.country)
+      ).sort((a, b) => a.name.localeCompare(b.name)),
+    [clubs, filters.country]
+  );
 
   useEffect(() => setDraft(filters.q), [filters.q]);
 
@@ -64,8 +88,8 @@ export default function FilterBar({
         })}
       </div>
 
-      <div className="flex flex-col gap-2 sm:flex-row">
-        <div className="relative flex-1">
+      <div className="flex flex-col gap-2">
+        <div className="relative">
           <svg
             viewBox="0 0 16 16"
             aria-hidden="true"
@@ -96,19 +120,58 @@ export default function FilterBar({
           />
         </div>
 
-        <select
-          value={filters.source}
-          onChange={(event) => onChange({ source: event.target.value })}
-          aria-label="Filter by source"
-          className="rounded-lg border border-ink-200 bg-white px-3 py-2 text-sm text-ink-700 focus:border-pitch-500 focus:outline-none dark:border-ink-800 dark:bg-ink-900 dark:text-ink-200"
-        >
-          <option value="all">All sources</option>
-          {sources.map((source) => (
-            <option key={source.id} value={source.id}>
-              {source.name}
-            </option>
-          ))}
-        </select>
+        <div className="flex gap-2">
+          <select
+            value={filters.country}
+            onChange={(event) => {
+              // A club from the old country would filter to nothing, so clear
+              // it rather than leaving an impossible combination selected.
+              const country = event.target.value;
+              const keepsClub =
+                filters.club === 'all' ||
+                country === 'all' ||
+                clubs.find((c) => c.id === filters.club)?.country === country;
+              onChange({ country, ...(keepsClub ? {} : { club: 'all' }) });
+            }}
+            aria-label="Filter by country"
+            className={SELECT_CLASS}
+          >
+            <option value="all">All countries</option>
+            {countries.map((country) => (
+              <option key={country.id} value={country.id}>
+                {country.label}
+              </option>
+            ))}
+          </select>
+
+          <select
+            value={filters.club}
+            onChange={(event) => onChange({ club: event.target.value })}
+            aria-label="Filter by club"
+            className={SELECT_CLASS}
+          >
+            <option value="all">All clubs</option>
+            {clubOptions.map((club) => (
+              <option key={club.id} value={club.id}>
+                {club.name}
+              </option>
+            ))}
+          </select>
+
+          <select
+            value={filters.source}
+            onChange={(event) => onChange({ source: event.target.value })}
+            aria-label="Filter by source"
+            className={SELECT_CLASS}
+          >
+            <option value="all">All sources</option>
+            {sources.map((source) => (
+              <option key={source.id} value={source.id}>
+                {source.name}
+              </option>
+            ))}
+          </select>
+        </div>
       </div>
     </div>
   );

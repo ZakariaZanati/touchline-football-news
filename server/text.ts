@@ -4,13 +4,22 @@
  * cross-source clustering.
  */
 
+// One merged set across languages. English and Spanish stopwords barely
+// overlap, so a single set costs nothing and keeps tokenise() language-blind —
+// which matters because clustering compares an English headline against a
+// Spanish one when two outlets report the same signing.
 const STOPWORDS = new Set(
   `a an and are as at be been but by for from had has have he her his how i if in
    into is it its of on or our out over said she that the their them then there
    these they this to was we were what when where which who will with would you
    your after before more most other some such than too very can just also new
    now get got make made take taken back off up down about against between during
-   under while both each few own same so only`
+   under while both each few own same so only
+
+   el la los las un una unos unas de del al en con por para sin sobre entre que
+   se su sus lo le les y o pero no ni es son era eran ha han habia fue fueron
+   esta este esa ese esto eso como cuando donde quien mas muy ya tambien porque
+   desde hasta tras durante ser estar tiene tienen hay dos tres`
     .split(/\s+/)
     .filter(Boolean)
 );
@@ -19,7 +28,10 @@ const STOPWORDS = new Set(
 const WEAK_TOKENS = new Set(
   `football soccer club side team match game news report reports latest update
    updates star player boss manager transfer window season fans supporters
-   premier league`
+   premier league
+
+   futbol equipo partido jugador jugadores entrenador tecnico liga temporada
+   noticias ultima hora aficion aficionados conjunto cuadro plantilla aslive`
     .split(/\s+/)
     .filter(Boolean)
 );
@@ -95,7 +107,8 @@ export function properNouns(str: string = ''): Set<string> {
   return out;
 }
 
-const ABBREVIATIONS = /\b(?:Mr|Mrs|Ms|Dr|St|Sr|Jr|vs|No|Nos|Fig|approx|c)\.$/i;
+const ABBREVIATIONS =
+  /\b(?:Mr|Mrs|Ms|Dr|St|Sr|Sra|Srta|Jr|vs|No|Nos|Fig|approx|c|Ud|Uds|EE|UU)\.$/i;
 
 /** Sentence splitter that doesn't break on "St." / "No. 6" / "1.5m". */
 export function splitSentences(text: string = ''): string[] {

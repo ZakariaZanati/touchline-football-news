@@ -11,13 +11,18 @@ import type {
   ExtractedStory,
   Summary,
   SummarisedStory,
+  TaggedStory,
 } from '../types.ts';
 
 /**
  * The minimum a story needs to be summarised locally. Kept structural so the
  * summariser can be handed a story from any stage of the pipeline.
  */
-type Summarisable = Pick<ExtractedStory, 'title' | 'body' | 'rssSummary'>;
+type Summarisable = Pick<
+  ExtractedStory,
+  'title' | 'body' | 'rssSummary' | 'language'
+> &
+  Partial<Pick<TaggedStory, 'countries'>>;
 
 /**
  * The zero-config summariser. Runs with no API key and no network calls.
@@ -166,13 +171,28 @@ export function summariseExtractive(story: Summarisable): Summary {
   const article = body.slice(0, 1600);
   const haystack = `${story.title} ${article}`;
 
+  // The competition gets a narrower window than the topic does, and the
+  // headline counts for more than the lede. A story names the competition it
+  // is about up front; one named deeper in the body is background, and reading
+  // that far filed an MLS match report under La Liga because it recounted
+  // Messi's Barcelona years.
+  const competitionQuery = {
+    title: story.title,
+    lede: body.slice(0, 600),
+    prefer: story.countries ?? [],
+  };
+
   return {
     headline,
     headlineRewritten: rewritten,
     bottomLine: bottomLine || normaliseWhitespace(story.rssSummary).slice(0, 300),
     keyFacts: extractFacts(article, 4).map((f) => f.value),
     topic: classifyTopic(haystack),
-    competition: classifyCompetition(haystack),
+    competition: classifyCompetition(competitionQuery),
+    // Sentences are quoted verbatim, so the summary is in whatever language
+    // the article was. The translation stage is what fixes that.
+    language: story.language,
+    translated: false,
     engine: 'extractive',
   };
 }

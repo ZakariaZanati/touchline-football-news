@@ -21,7 +21,6 @@ interface RawSummary {
   keyFacts?: string[];
   topic?: string;
   competition?: string;
-  clubs?: string[];
   importance?: number;
 }
 
@@ -50,14 +49,15 @@ const SYSTEM_PROMPT = `You compress football news into the shortest form that st
 
 Your reader is someone who is tired of clicking a teasing headline and then wading through 600 words of padding to find one fact. Give them the fact.
 
+Articles arrive in English or Spanish. Always write your output in English, whatever language the article is in — translate rather than quote. Keep club and player names in the form English readers use ("Atlético Madrid", "Real Sociedad", "La Liga"), and keep every number exactly as the article states it.
+
 For each article you are given, produce:
 
 - headline: a plain, factual restatement of the news in under 90 characters. Strip pull-quotes, teases and outlet branding. State the event itself. "'He's the one we wanted': Newcastle sign Gonzalez" becomes "Newcastle sign Nico Gonzalez from Man City for £50m". Never write "here's why", "revealed", "you won't believe" or any construction whose purpose is to withhold the news.
 - bottomLine: 1-3 sentences, at most 60 words total, giving the whole story. Lead with the outcome. Include the numbers that matter — fees, scorelines, contract lengths, how long a player is out. Write plain declarative prose. Do not editorialise, do not speculate beyond the article, do not add background the article does not contain, and never end by pointing at the full article.
 - keyFacts: 0-4 very short strings (under 40 characters each) holding the hard details — "£50m fee", "5-year deal", "out 6 weeks", "3-1 at Anfield". Only facts stated in the article. Omit rather than invent.
 - topic: one of transfer, match, injury, manager, club, other.
-- competition: the competition it concerns ("Premier League", "Champions League", ...), or an empty string if none applies.
-- clubs: 0-3 club names the story is about.
+- competition: the competition it concerns ("Premier League", "La Liga", "Champions League", ...), or an empty string if none applies.
 - importance: 1-5, where 5 is a major story a fan would want to know today and 1 is filler.
 
 Rules that override everything else:
@@ -79,7 +79,6 @@ const SUMMARY_SCHEMA: Anthropic.JSONOutputFormat['schema'] = {
           keyFacts: { type: 'array', items: { type: 'string' } },
           topic: { type: 'string', enum: TOPICS.map((t) => t.id) },
           competition: { type: 'string' },
-          clubs: { type: 'array', items: { type: 'string' } },
           importance: { type: 'integer', enum: [1, 2, 3, 4, 5] },
         },
         required: [
@@ -89,7 +88,6 @@ const SUMMARY_SCHEMA: Anthropic.JSONOutputFormat['schema'] = {
           'keyFacts',
           'topic',
           'competition',
-          'clubs',
           'importance',
         ],
         additionalProperties: false,
@@ -183,7 +181,6 @@ async function summariseBatch(stories: ClusteredStory[]): Promise<BatchResult> {
 }
 
 function adopt(story: ClusteredStory, raw: RawSummary): Summary {
-  const haystack = `${story.title} ${story.body ?? ''}`;
   const competition = normaliseWhitespace(raw.competition ?? '');
 
   return {
@@ -197,8 +194,17 @@ function adopt(story: ClusteredStory, raw: RawSummary): Summary {
       .filter(Boolean)
       .slice(0, 4),
     topic: normaliseTopic(raw.topic),
-    competition: competition || classifyCompetition(haystack),
-    clubs: (raw.clubs ?? []).map((c) => normaliseWhitespace(c)).filter(Boolean).slice(0, 3),
+    competition:
+      competition ||
+      classifyCompetition({
+        title: story.title,
+        lede: (story.body ?? '').slice(0, 600),
+        prefer: story.countries,
+      }),
+    // Claude is instructed to answer in English whatever the article's
+    // language, so its output never needs the translation stage.
+    language: 'en',
+    translated: story.language !== 'en',
     importance:
       typeof raw.importance === 'number' && Number.isFinite(raw.importance)
         ? Math.min(5, Math.max(1, Math.round(raw.importance)))
