@@ -23,7 +23,9 @@ const OTHER_SPORTS =
  * football's — so "Arsenal's owners also bought an NBA team" still passes,
  * while a Solheim Cup report doesn't.
  */
-export function isFootball(...parts) {
+export function isFootball(
+  ...parts: (string | null | undefined)[]
+): boolean {
   const text = parts.filter(Boolean).join(' ').slice(0, 4000);
 
   const football = FOOTBALL_TERMS.test(text) || CLUBS.test(text);

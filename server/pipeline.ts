@@ -1,10 +1,13 @@
-import { config, summarizerEngine } from './config.js';
-import { fetchAllFeeds } from './feeds.js';
-import { extractBodies } from './extract.js';
-import { clusterStories } from './cluster.js';
-import { summariseStories } from './summarize/index.js';
-import { isFootball } from './relevance.js';
-import { readSeconds } from './text.js';
+import { config, summarizerEngine } from './config.ts';
+import { errorMessage } from './errors.ts';
+import { fetchAllFeeds } from './feeds.ts';
+import { extractBodies } from './extract.ts';
+import { clusterStories } from './cluster.ts';
+import { summariseStories } from './summarize/index.ts';
+import { isFootball } from './relevance.ts';
+import { readSeconds } from './text.ts';
+import type { FeedStory, SummarisedStory } from './types.ts';
+import type { FeedStatus, Meta, Story } from '../shared/types.ts';
 
 /**
  * The refresh pipeline:
@@ -15,7 +18,14 @@ import { readSeconds } from './text.js';
  * never waits on a refresh that's already running.
  */
 
-const state = {
+interface State extends Omit<Meta, 'storyCount' | 'refreshing' | 'refreshMinutes' | 'feeds'> {
+  stories: Story[];
+  feedStatus: FeedStatus[];
+  /** The in-flight refresh, if one is running. */
+  refreshing: Promise<Story[]> | null;
+}
+
+const state: State = {
   stories: [],
   feedStatus: [],
   lastUpdated: null,
@@ -23,7 +33,7 @@ const state = {
   engine: summarizerEngine(),
   usage: null,
   warnings: [],
-  refreshing: null, // in-flight promise, if any
+  refreshing: null,
   durationMs: null,
 };
 
@@ -37,15 +47,16 @@ const state = {
  * a second slot, so the feed stays broad and clustering has cross-source
  * duplicates to actually find.
  */
-function selectFairly(items, limit) {
-  const bySource = new Map();
+function selectFairly(items: FeedStory[], limit: number): FeedStory[] {
+  const bySource = new Map<string, FeedStory[]>();
   for (const item of items) {
-    if (!bySource.has(item.sourceId)) bySource.set(item.sourceId, []);
-    bySource.get(item.sourceId).push(item);
+    const queue = bySource.get(item.sourceId);
+    if (queue) queue.push(item);
+    else bySource.set(item.sourceId, [item]);
   }
 
   const queues = [...bySource.values()]; // each already newest-first
-  const picked = [];
+  const picked: FeedStory[] = [];
 
   for (let round = 0; picked.length < limit; round += 1) {
     let tookAny = false;
@@ -62,16 +73,16 @@ function selectFairly(items, limit) {
 }
 
 /** Ranks stories for the default feed: recency, with a nudge for importance. */
-function rank(story) {
+function rank(story: SummarisedStory): number {
   const ageHours = (Date.now() - story.publishedAt) / 3600_000;
   const recency = Math.exp(-ageHours / 9);
-  const importance = ((story.summary?.importance ?? 3) - 3) * 0.06;
+  const importance = ((story.summary.importance ?? 3) - 3) * 0.06;
   const corroboration = Math.min(story.sourceCount - 1, 4) * 0.03;
   return recency + importance + corroboration;
 }
 
 /** Shapes an internal story into the object the client consumes. */
-function toPublic(story) {
+function toPublic(story: SummarisedStory): Story {
   const { summary } = story;
   return {
     id: story.id,
@@ -104,9 +115,9 @@ function toPublic(story) {
   };
 }
 
-async function runPipeline() {
+async function runPipeline(): Promise<Story[]> {
   const startedAt = Date.now();
-  const warnings = [];
+  const warnings: string[] = [];
 
   const { items, feedStatus } = await fetchAllFeeds();
   for (const feed of feedStatus) {
@@ -142,7 +153,7 @@ async function runPipeline() {
   warnings.push(...errors.map((e) => `summariser: ${e}`));
 
   const ranked = stories
-    .filter((s) => s.summary?.bottomLine)
+    .filter((s) => s.summary.bottomLine)
     .sort((a, b) => rank(b) - rank(a))
     .map(toPublic);
 
@@ -162,7 +173,7 @@ async function runPipeline() {
  * Refreshes at most once at a time. Concurrent callers share the in-flight run
  * rather than starting a second scrape of every source.
  */
-export function refresh({ force = false } = {}) {
+export function refresh({ force = false } = {}): Promise<Story[]> {
   if (state.refreshing) return state.refreshing;
 
   const isFresh =
@@ -171,8 +182,8 @@ export function refresh({ force = false } = {}) {
   if (isFresh && !force) return Promise.resolve(state.stories);
 
   state.refreshing = runPipeline()
-    .catch((error) => {
-      state.lastError = error.message;
+    .catch((error: unknown) => {
+      state.lastError = errorMessage(error);
       // Keep serving the previous snapshot if we have one.
       return state.stories;
     })
@@ -184,7 +195,7 @@ export function refresh({ force = false } = {}) {
 }
 
 /** Returns cached stories immediately, kicking off a refresh if stale. */
-export async function getStories() {
+export async function getStories(): Promise<Story[]> {
   if (!state.lastUpdated) return refresh();
 
   const isStale =
@@ -194,7 +205,7 @@ export async function getStories() {
   return state.stories;
 }
 
-export function getMeta() {
+export function getMeta(): Meta {
   return {
     lastUpdated: state.lastUpdated,
     lastError: state.lastError,
@@ -209,7 +220,7 @@ export function getMeta() {
   };
 }
 
-export function startBackgroundRefresh() {
+export function startBackgroundRefresh(): NodeJS.Timeout {
   refresh({ force: true });
   const timer = setInterval(
     () => refresh({ force: true }),

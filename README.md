@@ -30,6 +30,9 @@ For a production build:
 npm run build && npm start   # single origin on :8787
 ```
 
+`npm run build` typechecks both projects before bundling the frontend, so a
+type error fails the build rather than reaching the browser.
+
 ## Better summaries (optional)
 
 Out of the box, summaries are built by a local extractive summariser: no API
@@ -80,20 +83,47 @@ never waits on a refresh, and the whole pipeline re-runs every 15 minutes.
 ## Layout
 
 ```
+shared/
+  types.ts          the API/browser wire contract, shared by both sides
 server/
-  index.js          Express API + static hosting
-  pipeline.js       orchestration, caching, ranking
-  feeds.js          RSS fetch, normalise, format filtering
-  extract.js        article fetch + Readability + de-noising
-  cluster.js        cross-source duplicate grouping
-  relevance.js      football-or-not gate
-  text.js           tokenising, headline de-baiting, fact extraction
-  sources.js        the feed registry
+  index.ts          Express API + static hosting
+  pipeline.ts       orchestration, caching, ranking
+  feeds.ts          RSS fetch, normalise, format filtering
+  extract.ts        article fetch + Readability + de-noising
+  cluster.ts        cross-source duplicate grouping
+  relevance.ts      football-or-not gate
+  text.ts           tokenising, headline de-baiting, fact extraction
+  sources.ts        the feed registry
+  types.ts          the pipeline's internal story shapes
+  errors.ts         narrowing thrown `unknown` to a message
   summarize/
-    extractive.js   local summariser (default)
-    claude.js       batched Claude summariser
-    topics.js       topic + competition tagging
+    extractive.ts   local summariser (default)
+    claude.ts       batched Claude summariser
+    topics.ts       topic + competition tagging
 src/                React 19 SPA (Vite 8, Tailwind 4)
+```
+
+## TypeScript
+
+The whole project is TypeScript, in two projects that `tsc -b` builds together:
+`tsconfig.app.json` for the browser and `tsconfig.node.json` for the server.
+
+Neither emits anything. Vite compiles the frontend, and the server runs its
+`.ts` files directly — Node 24 strips the types itself, so there is no build
+step and no `dist/` for the API. Two consequences worth knowing:
+
+- **Server imports carry a `.ts` extension.** Node resolves the specifier
+  literally and does not rewrite it, so `./config.ts` is the real path.
+- **Only erasable syntax is allowed** (`erasableSyntaxOnly`) — no `enum`, no
+  `namespace`, no constructor parameter properties. Type stripping replaces
+  types with whitespace; it cannot generate code.
+
+`shared/types.ts` is the reason this is worth doing: the response shapes are
+declared once, and changing one fails the build on whichever side hasn't caught
+up. It contains types only, so every import of it is erased.
+
+```bash
+npm run typecheck   # tsc -b, both projects
 ```
 
 ## API

@@ -1,4 +1,4 @@
-export function SkeletonList({ count = 5 }) {
+export function SkeletonList({ count = 5 }: { count?: number }) {
   return (
     <div className="space-y-3" aria-busy="true" aria-label="Loading stories">
       {Array.from({ length: count }, (_, i) => (
@@ -21,7 +21,12 @@ export function SkeletonList({ count = 5 }) {
   );
 }
 
-export function EmptyState({ onReset, hasFilters }) {
+interface EmptyStateProps {
+  onReset: () => void;
+  hasFilters: boolean;
+}
+
+export function EmptyState({ onReset, hasFilters }: EmptyStateProps) {
   return (
     <div className="rounded-xl border border-dashed border-ink-300 py-14 text-center dark:border-ink-800">
       <p className="text-sm font-medium text-ink-700 dark:text-ink-300">
@@ -45,7 +50,12 @@ export function EmptyState({ onReset, hasFilters }) {
   );
 }
 
-export function ErrorState({ message, onRetry }) {
+interface ErrorStateProps {
+  message: string | null;
+  onRetry: () => void;
+}
+
+export function ErrorState({ message, onRetry }: ErrorStateProps) {
   return (
     <div
       role="alert"

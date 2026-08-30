@@ -2,8 +2,10 @@ import { JSDOM, VirtualConsole } from 'jsdom';
 import { Readability } from '@mozilla/readability';
 import pLimit from 'p-limit';
 
-import { config } from './config.js';
-import { normaliseWhitespace } from './text.js';
+import { config } from './config.ts';
+import { errorMessage, isTimeout } from './errors.ts';
+import { normaliseWhitespace } from './text.ts';
+import type { ExtractedStory, FeedStory } from './types.ts';
 
 /**
  * Article body extraction.
@@ -19,9 +21,19 @@ import { normaliseWhitespace } from './text.js';
 const virtualConsole = new VirtualConsole();
 virtualConsole.on('jsdomError', () => {});
 
-const cache = new Map(); // url -> { at, value }
+/** What one article page yielded, successfully or not. */
+interface Extraction {
+  body: string;
+  byline: string | null;
+  ok: boolean;
+  error: string | null;
+  /** A video page, gallery or link rail — there's no article in it. */
+  stub: boolean;
+}
 
-function cacheGet(url) {
+const cache = new Map<string, { at: number; value: Extraction }>();
+
+function cacheGet(url: string): Extraction | null {
   const hit = cache.get(url);
   if (!hit) return null;
   if (Date.now() - hit.at > config.articleCacheMinutes * 60_000) {
@@ -31,7 +43,7 @@ function cacheGet(url) {
   return hit.value;
 }
 
-function cacheSet(url, value) {
+function cacheSet(url: string, value: Extraction): void {
   cache.set(url, { at: Date.now(), value });
   // Keep the cache from growing unbounded on a long-running process.
   if (cache.size > 800) {
@@ -86,7 +98,7 @@ const NOISE_SENTENCES = [
  */
 const REACH_STAMP = /\d{1,2}:\d{2},\s*\d{1,2}\s+[A-Z][a-z]{2}\s+\d{4}/g;
 
-function dropPublisherPreamble(text) {
+function dropPublisherPreamble(text: string): string {
   const head = text.slice(0, 450);
   let cutAt = -1;
   for (const match of head.matchAll(REACH_STAMP)) {
@@ -115,7 +127,7 @@ const FUNCTION_WORDS = new Set(
  * Measuring the shape of the text rather than matching each publisher's markup
  * means this keeps working when their markup changes.
  */
-function proseScore(sample) {
+function proseScore(sample: string): number {
   const tokens = sample
     .toLowerCase()
     .replace(/[^a-z\s]/g, ' ')
@@ -134,7 +146,7 @@ const PROSE_FLOOR = 0.15;
  * had no article in it to find. Uses the same narrow window as the repair, so
  * a junk prefix can't be averaged out by good text further down.
  */
-function looksLikeProse(text) {
+function looksLikeProse(text: string): boolean {
   return proseScore(text.slice(0, WINDOW)) >= PROSE_FLOOR;
 }
 
@@ -143,7 +155,7 @@ function looksLikeProse(text) {
  * article, the article is still in there — so slide forward to where the prose
  * actually starts instead of discarding the story.
  */
-function trimToProse(text) {
+function trimToProse(text: string): string {
   if (proseScore(text.slice(0, WINDOW)) >= PROSE_FLOOR) return text;
 
   const limit = Math.min(text.length - WINDOW, 3000);
@@ -171,7 +183,7 @@ function trimToProse(text) {
  * capitalised words, so a story that legitimately opens with someone's name
  * keeps it.
  */
-function dropByline(text, byline) {
+function dropByline(text: string, byline: string | null | undefined): string {
   const name = normaliseWhitespace(byline ?? '')
     .replace(/^(?:by|words by)\s+/i, '')
     .split(/\s*[,|·-]\s*/)[0]; // "Tim Vickery, Sao Paulo" -> "Tim Vickery"
@@ -182,7 +194,7 @@ function dropByline(text, byline) {
   return text.slice(name.length).replace(/^[\s,|·-]+/, '');
 }
 
-function cleanBody(text = '', byline = '') {
+function cleanBody(text: string = '', byline: string = ''): string {
   let out = text
     // Zero-width joiners some CMSes sprinkle between paragraphs; they break
     // sentence splitting by gluing "round.‌It" together.
@@ -216,11 +228,17 @@ function cleanBody(text = '', byline = '') {
   return trimToProse(dropByline(dropPublisherPreamble(out), byline));
 }
 
-async function extractOne(story) {
+async function extractOne(story: FeedStory): Promise<Extraction> {
   const cached = cacheGet(story.url);
   if (cached) return cached;
 
-  const result = { body: '', byline: null, ok: false, error: null, stub: false };
+  const result: Extraction = {
+    body: '',
+    byline: null,
+    ok: false,
+    error: null,
+    stub: false,
+  };
 
   try {
     const response = await fetch(story.url, {
@@ -263,7 +281,7 @@ async function extractOne(story) {
       result.stub = true;
     }
   } catch (error) {
-    result.error = error.name === 'TimeoutError' ? 'timeout' : error.message;
+    result.error = isTimeout(error) ? 'timeout' : errorMessage(error);
   }
 
   cacheSet(story.url, result);
@@ -275,12 +293,14 @@ async function extractOne(story) {
  * falls back to its RSS summary rather than being dropped — a short summary
  * still beats no story.
  */
-export async function extractBodies(stories) {
+export async function extractBodies(
+  stories: FeedStory[]
+): Promise<ExtractedStory[]> {
   const limit = pLimit(config.articleConcurrency);
 
   return Promise.all(
     stories.map((story) =>
-      limit(async () => {
+      limit(async (): Promise<ExtractedStory> => {
         const { body, byline, ok, error, stub } = await extractOne(story);
         return {
           ...story,

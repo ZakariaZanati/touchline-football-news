@@ -4,8 +4,20 @@ import {
   deBaitHeadline,
   extractFacts,
   normaliseWhitespace,
-} from '../text.js';
-import { classifyTopic, classifyCompetition } from './topics.js';
+} from '../text.ts';
+import { classifyTopic, classifyCompetition } from './topics.ts';
+import type {
+  ClusteredStory,
+  ExtractedStory,
+  Summary,
+  SummarisedStory,
+} from '../types.ts';
+
+/**
+ * The minimum a story needs to be summarised locally. Kept structural so the
+ * summariser can be handed a story from any stage of the pipeline.
+ */
+type Summarisable = Pick<ExtractedStory, 'title' | 'body' | 'rssSummary'>;
 
 /**
  * The zero-config summariser. Runs with no API key and no network calls.
@@ -25,7 +37,18 @@ const FILLER_RE =
 /** The whole point is a summary you can take in at a glance. */
 const MAX_SUMMARY_CHARS = 250;
 
-function scoreSentence(sentence, index, { titleTokens, docFreq, totalSentences }) {
+/** Article-level context every sentence is scored against. */
+interface ScoringContext {
+  titleTokens: Set<string>;
+  docFreq: Map<string, number>;
+  totalSentences: number;
+}
+
+function scoreSentence(
+  sentence: string,
+  index: number,
+  { titleTokens, docFreq, totalSentences }: ScoringContext
+): number {
   const tokens = tokenise(sentence);
   if (!tokens.length) return -Infinity;
 
@@ -69,8 +92,8 @@ function scoreSentence(sentence, index, { titleTokens, docFreq, totalSentences }
   );
 }
 
-function buildDocFreq(sentences) {
-  const freq = new Map();
+function buildDocFreq(sentences: string[]): Map<string, number> {
+  const freq = new Map<string, number>();
   for (const sentence of sentences) {
     for (const token of new Set(tokenise(sentence))) {
       freq.set(token, (freq.get(token) ?? 0) + 1);
@@ -83,11 +106,11 @@ function buildDocFreq(sentences) {
 }
 
 /** Drops the "Reporter Name, Somewhere —" dateline some wires prepend. */
-function stripDateline(sentence) {
+function stripDateline(sentence: string): string {
   return sentence.replace(/^[A-Z][A-Za-z .'-]{2,40}\s*[—–-]\s+/, '').trim();
 }
 
-function trimToLength(text, maxChars) {
+function trimToLength(text: string, maxChars: number): string {
   if (text.length <= maxChars) return text;
   const cut = text.slice(0, maxChars);
   const lastStop = Math.max(cut.lastIndexOf('. '), cut.lastIndexOf('; '));
@@ -95,12 +118,12 @@ function trimToLength(text, maxChars) {
   return `${cut.slice(0, cut.lastIndexOf(' ')).trim()}…`;
 }
 
-export function summariseExtractive(story) {
+export function summariseExtractive(story: Summarisable): Summary {
   const body = normaliseWhitespace(story.body ?? '');
   const sentences = splitSentences(body).filter((s) => !FILLER_RE.test(s));
   const titleTokens = new Set(tokenise(story.title));
 
-  const context = {
+  const context: ScoringContext = {
     titleTokens,
     docFreq: buildDocFreq(sentences),
     totalSentences: sentences.length,
@@ -154,6 +177,11 @@ export function summariseExtractive(story) {
   };
 }
 
-export function summariseAllExtractive(stories) {
-  return stories.map((story) => ({ ...story, summary: summariseExtractive(story) }));
+export function summariseAllExtractive(
+  stories: ClusteredStory[]
+): SummarisedStory[] {
+  return stories.map((story) => ({
+    ...story,
+    summary: summariseExtractive(story),
+  }));
 }

@@ -1,8 +1,17 @@
-import { config, summarizerEngine } from '../config.js';
-import { summariseAllExtractive } from './extractive.js';
-import { summariseAllWithClaude } from './claude.js';
+import { config, summarizerEngine } from '../config.ts';
+import { summariseAllExtractive } from './extractive.ts';
+import { summariseAllWithClaude } from './claude.ts';
+import type { ClusteredStory, SummarisedStory } from '../types.ts';
+import type { SummaryEngine, TokenUsage } from '../../shared/types.ts';
 
-export { TOPICS } from './topics.js';
+export { TOPICS } from './topics.ts';
+
+export interface SummaryRun {
+  stories: SummarisedStory[];
+  engine: SummaryEngine;
+  usage: TokenUsage | null;
+  errors: string[];
+}
 
 /**
  * Picks a summarisation engine and runs it.
@@ -11,7 +20,9 @@ export { TOPICS } from './topics.js';
  * ANTHROPIC_API_KEY upgrades every summary — properly rewritten headlines and
  * prose that reads like a person wrote it — without any other change.
  */
-export async function summariseStories(stories) {
+export async function summariseStories(
+  stories: ClusteredStory[]
+): Promise<SummaryRun> {
   const engine = summarizerEngine();
 
   if (engine === 'claude') {

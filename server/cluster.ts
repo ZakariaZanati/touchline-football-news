@@ -1,4 +1,9 @@
-import { signatureTokens, properNouns, jaccard } from './text.js';
+import { signatureTokens, properNouns, jaccard } from './text.ts';
+import type {
+  ClusterCoverage,
+  ClusteredStory,
+  ExtractedStory,
+} from './types.ts';
 
 /**
  * Cross-source clustering.
@@ -12,7 +17,18 @@ const TITLE_THRESHOLD = 0.42;
 const NAME_THRESHOLD = 0.55;
 const WINDOW_HOURS = 20;
 
-function fingerprint(story) {
+/** The comparable shape of a story: what it's about, and who's in it. */
+interface Fingerprint {
+  tokens: Set<string>;
+  names: Set<string>;
+}
+
+interface Entry {
+  story: ExtractedStory;
+  print: Fingerprint;
+}
+
+function fingerprint(story: ExtractedStory): Fingerprint {
   const headlineTokens = signatureTokens(story.title);
   // A little body text sharpens the signal without letting long articles
   // dominate the comparison.
@@ -23,7 +39,7 @@ function fingerprint(story) {
   };
 }
 
-function isSameStory(a, b) {
+function isSameStory(a: Entry, b: Entry): boolean {
   if (Math.abs(a.story.publishedAt - b.story.publishedAt) > WINDOW_HOURS * 3600_000) {
     return false;
   }
@@ -41,9 +57,12 @@ function isSameStory(a, b) {
  * Greedy single-pass clustering. Stories arrive newest-first, so the first
  * member of a cluster is its most recent report.
  */
-export function clusterStories(stories) {
-  const entries = stories.map((story) => ({ story, print: fingerprint(story) }));
-  const clusters = [];
+export function clusterStories(stories: ExtractedStory[]): ClusteredStory[] {
+  const entries: Entry[] = stories.map((story) => ({
+    story,
+    print: fingerprint(story),
+  }));
+  const clusters: { members: Entry[] }[] = [];
 
   for (const entry of entries) {
     const match = clusters.find((cluster) =>
@@ -53,7 +72,7 @@ export function clusterStories(stories) {
     else clusters.push({ members: [entry] });
   }
 
-  return clusters.map(({ members }) => {
+  return clusters.map(({ members }): ClusteredStory => {
     // The story we summarise should be the one with the most to say: prefer a
     // real extracted body, then outlet trust, then length.
     const ranked = [...members].sort((a, b) => {
@@ -70,8 +89,8 @@ export function clusterStories(stories) {
     // One outlet often runs several angles on the same story (a preview, a
     // team-news piece, a "what channel" listing). Those are the same source
     // saying it three times, not corroboration — so credit each outlet once.
-    const seenSources = new Set();
-    const coverage = [];
+    const seenSources = new Set<string>();
+    const coverage: ClusterCoverage[] = [];
     for (const { story } of ranked) {
       if (seenSources.has(story.sourceId)) continue;
       seenSources.add(story.sourceId);

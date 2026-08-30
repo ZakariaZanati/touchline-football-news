@@ -6,11 +6,12 @@
   "description": "Football news, de-clickbaited. Scrapes multiple sources and compiles each story into a short, factual paragraph.",
   "scripts": {
     "dev": "concurrently -n server,web -c magenta,cyan \"npm:dev:server\" \"npm:dev:web\"",
-    "dev:server": "node --watch server/index.js",
+    "dev:server": "node --watch server/index.ts",
     "dev:web": "vite",
-    "build": "vite build",
+    "typecheck": "tsc -b",
+    "build": "tsc -b && vite build",
     "preview": "vite preview",
-    "start": "NODE_ENV=production node server/index.js"
+    "start": "NODE_ENV=production node server/index.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.121.0",
@@ -26,9 +27,16 @@
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.3",
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/jsdom": "^30.0.0",
+    "@types/node": "^26.4.0",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.5",
     "@vitejs/plugin-react": "^6.1.0",
     "concurrently": "^10.0.5",
     "tailwindcss": "^4.3.3",
+    "typescript": "^7.0.2",
     "vite": "^8.2.2"
   }
 }

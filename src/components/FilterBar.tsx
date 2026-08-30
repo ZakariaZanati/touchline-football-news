@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react';
 
-const ALL_TOPICS = [
+import type { SourceInfo } from '../../shared/types.ts';
+import type { Filters, TopicFilter } from '../types.ts';
+
+const ALL_TOPICS: { id: TopicFilter; label: string }[] = [
   { id: 'all', label: 'All' },
   { id: 'transfer', label: 'Transfers' },
   { id: 'match', label: 'Match' },
@@ -10,7 +13,17 @@ const ALL_TOPICS = [
   { id: 'club', label: 'Club' },
 ];
 
-export default function FilterBar({ filters, onChange, sources }) {
+interface FilterBarProps {
+  filters: Filters;
+  onChange: (patch: Partial<Filters>) => void;
+  sources: SourceInfo[];
+}
+
+export default function FilterBar({
+  filters,
+  onChange,
+  sources,
+}: FilterBarProps) {
   // Local mirror so typing stays responsive; the debounce below is what
   // actually reaches the API.
   const [draft, setDraft] = useState(filters.q);
