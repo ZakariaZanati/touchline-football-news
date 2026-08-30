@@ -1,12 +1,16 @@
-import { config, summarizerEngine } from './config.ts';
+import { config, summarizerEngine, translatorEngine } from './config.ts';
 import { errorMessage } from './errors.ts';
 import { fetchAllFeeds } from './feeds.ts';
 import { extractBodies } from './extract.ts';
 import { clusterStories } from './cluster.ts';
+import { countriesOf, detectClubs } from './clubs.ts';
 import { summariseStories } from './summarize/index.ts';
+import { competitionCountry } from './summarize/topics.ts';
+import { translateStories } from './translate/index.ts';
 import { isFootball } from './relevance.ts';
 import { readSeconds } from './text.ts';
-import type { FeedStory, SummarisedStory } from './types.ts';
+import type { ExtractedStory, SummarisedStory, TaggedStory } from './types.ts';
+import type { FeedStory } from './types.ts';
 import type { FeedStatus, Meta, Story } from '../shared/types.ts';
 
 /**
@@ -31,11 +35,41 @@ const state: State = {
   lastUpdated: null,
   lastError: null,
   engine: summarizerEngine(),
+  translator: translatorEngine(),
+  untranslated: 0,
   usage: null,
   warnings: [],
   refreshing: null,
   durationMs: null,
 };
+
+/**
+ * Resolves the clubs and countries a story is about.
+ *
+ * Deliberately deterministic and engine-independent: the filters have to work
+ * identically whether Claude or the local summariser produced the text, so the
+ * tags come from the article rather than from the model. Only the opening of
+ * the body is searched — a related-links rail at the foot of a Barcelona piece
+ * shouldn't tag it as a Chelsea story.
+ */
+function tagStory(story: ExtractedStory): TaggedStory {
+  const clubs = detectClubs(story.title, story.body);
+  const countries = countriesOf(clubs);
+
+  // A story with no club we recognise can still belong to a country, via the
+  // competition it names — "a La Liga referee was suspended". Read only the
+  // headline and lede, for the same reason club detection does: an MLS match
+  // report that mentions La Liga in passing is not a Spanish football story.
+  if (!countries.length) {
+    const fromCompetition = competitionCountry({
+      title: story.title,
+      lede: story.body.slice(0, 600),
+    });
+    if (fromCompetition) countries.push(fromCompetition);
+  }
+
+  return { ...story, clubs, countries };
+}
 
 /**
  * Picks the `limit` stories to run the expensive stages over, round-robin
@@ -93,8 +127,12 @@ function toPublic(story: SummarisedStory): Story {
     keyFacts: summary.keyFacts ?? [],
     topic: summary.topic,
     competition: summary.competition ?? null,
-    clubs: summary.clubs ?? [],
+    clubs: story.clubs,
+    countries: story.countries,
     importance: summary.importance ?? 3,
+    language: summary.language,
+    translated: summary.translated,
+    sourceLanguage: story.language,
     publishedAt: new Date(story.publishedAt).toISOString(),
     url: story.url,
     image: story.image,
@@ -113,6 +151,21 @@ function toPublic(story: SummarisedStory): Story {
     ),
     engine: summary.engine,
   };
+}
+
+/** Summarising and translating are billed the same way, so report one total. */
+function sumUsage(
+  ...parts: (Meta['usage'] | null)[]
+): Meta['usage'] {
+  const present = parts.filter((p) => p !== null);
+  if (!present.length) return null;
+
+  return present.reduce((total, part) => ({
+    input: total.input + part.input,
+    output: total.output + part.output,
+    cacheRead: total.cacheRead + part.cacheRead,
+    cacheWrite: total.cacheWrite + part.cacheWrite,
+  }));
 }
 
 async function runPipeline(): Promise<Story[]> {
@@ -148,11 +201,22 @@ async function runPipeline(): Promise<Story[]> {
   const dropped = extracted.length - withBodies.length;
   if (dropped) warnings.push(`${dropped} stub/off-topic stories filtered out`);
 
-  const clustered = clusterStories(withBodies);
+  const clustered = clusterStories(withBodies.map(tagStory));
   const { stories, engine, usage, errors } = await summariseStories(clustered);
   warnings.push(...errors.map((e) => `summariser: ${e}`));
 
-  const ranked = stories
+  // Only the extractive engine leaves foreign-language text behind, so in the
+  // usual configuration this stage finds nothing to do and costs nothing.
+  const translation = await translateStories(stories);
+  warnings.push(...translation.errors.map((e) => `translator: ${e}`));
+  if (translation.untranslated) {
+    warnings.push(
+      `${translation.untranslated} summaries left in their source language ` +
+        `(translator: ${translation.translator})`
+    );
+  }
+
+  const ranked = translation.stories
     .filter((s) => s.summary.bottomLine)
     .sort((a, b) => rank(b) - rank(a))
     .map(toPublic);
@@ -162,7 +226,9 @@ async function runPipeline(): Promise<Story[]> {
   state.lastUpdated = new Date().toISOString();
   state.lastError = null;
   state.engine = engine;
-  state.usage = usage;
+  state.translator = translation.translator;
+  state.untranslated = translation.untranslated;
+  state.usage = sumUsage(usage, translation.usage);
   state.warnings = warnings;
   state.durationMs = Date.now() - startedAt;
 
@@ -210,6 +276,8 @@ export function getMeta(): Meta {
     lastUpdated: state.lastUpdated,
     lastError: state.lastError,
     engine: state.engine,
+    translator: state.translator,
+    untranslated: state.untranslated,
     storyCount: state.stories.length,
     refreshing: state.refreshing !== null,
     refreshMinutes: config.refreshMinutes,

@@ -24,6 +24,35 @@ export interface Topic {
   label: string;
 }
 
+/**
+ * Languages the text pipeline understands. Every stage that scores or splits
+ * prose is keyed on this — see `server/language.ts`.
+ */
+export type Language = 'en' | 'es';
+
+/** Countries whose football the club registry can recognise. */
+export type CountryId =
+  | 'england'
+  | 'spain'
+  | 'scotland'
+  | 'italy'
+  | 'germany'
+  | 'france'
+  | 'portugal'
+  | 'netherlands';
+
+export interface Country {
+  id: CountryId;
+  label: string;
+}
+
+/** A club a story is about, resolved against the registry. */
+export interface ClubRef {
+  id: string;
+  name: string;
+  country: CountryId;
+}
+
 /** One outlet's report of a story, within a cluster. */
 export interface Coverage {
   sourceId: string;
@@ -42,8 +71,17 @@ export interface Story {
   keyFacts: string[];
   topic: TopicId;
   competition: string | null;
-  clubs: string[];
+  /** Clubs detected in the story, resolved against the registry. */
+  clubs: ClubRef[];
+  /** Countries this story's football belongs to, from its clubs and competition. */
+  countries: CountryId[];
   importance: number;
+  /** The language the summary is written in — always 'en' once translated. */
+  language: Language;
+  /** True when the summary was translated out of its source language. */
+  translated: boolean;
+  /** The article's own language, which may differ from `language`. */
+  sourceLanguage: Language;
   /** ISO 8601. */
   publishedAt: string;
   url: string;
@@ -75,10 +113,16 @@ export interface TokenUsage {
   cacheWrite: number;
 }
 
+export type TranslatorEngine = 'claude' | 'none';
+
 export interface Meta {
   lastUpdated: string | null;
   lastError: string | null;
   engine: SummaryEngine;
+  /** How non-English summaries are brought into English, if at all. */
+  translator: TranslatorEngine;
+  /** Stories still showing in their source language because no translator ran. */
+  untranslated: number;
   storyCount: number;
   refreshing: boolean;
   refreshMinutes: number;
@@ -92,6 +136,15 @@ export interface SourceInfo {
   id: string;
   name: string;
   url: string;
+  country: CountryId;
+  language: Language;
+}
+
+/** A club the feed can be filtered by. */
+export interface ClubInfo {
+  id: string;
+  name: string;
+  country: CountryId;
 }
 
 // --- Endpoint responses ----------------------------------------------------
@@ -105,6 +158,8 @@ export interface NewsResponse {
 export interface SourcesResponse {
   sources: SourceInfo[];
   topics: Topic[];
+  countries: Country[];
+  clubs: ClubInfo[];
 }
 
 export interface RefreshResponse {

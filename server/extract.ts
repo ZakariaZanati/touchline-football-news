@@ -4,8 +4,11 @@ import pLimit from 'p-limit';
 
 import { config } from './config.ts';
 import { errorMessage, isTimeout } from './errors.ts';
-import { normaliseWhitespace } from './text.ts';
+import { PROSE_FLOOR, WINDOW, detectLanguage, detectProse } from './language.ts';
+import { SECTION_LABEL } from './clubs.ts';
+import { foldAccents, normaliseWhitespace } from './text.ts';
 import type { ExtractedStory, FeedStory } from './types.ts';
+import type { Language } from '../shared/types.ts';
 
 /**
  * Article body extraction.
@@ -29,6 +32,8 @@ interface Extraction {
   error: string | null;
   /** A video page, gallery or link rail — there's no article in it. */
   stub: boolean;
+  /** The language the body is written in. Meaningless when `ok` is false. */
+  language: Language;
 }
 
 const cache = new Map<string, { at: number; value: Extraction }>();
@@ -98,6 +103,25 @@ const NOISE_SENTENCES = [
  */
 const REACH_STAMP = /\d{1,2}:\d{2},\s*\d{1,2}\s+[A-Z][a-z]{2}\s+\d{4}/g;
 
+/**
+ * Marca opens an article body with its section label welded to the standfirst
+ * and no separator — "GetafeEl futbolista serbio será oficial…". The label is
+ * always a club name, so the registry recognises it; anything it doesn't
+ * recognise is left alone rather than guessed at.
+ */
+function dropSectionLabel(text: string): string {
+  const match = SECTION_LABEL.exec(foldAccents(text));
+  if (!match) return text;
+
+  // Only a label welded straight onto a capitalised word is an artifact.
+  // "Barcelona have confirmed…" is prose and must survive untouched, and so
+  // must "Atlético Madrid will not negotiate…".
+  const next = text.charAt(match[0].length);
+  if (!next || next !== next.toUpperCase() || !/[A-Za-z]/.test(next)) return text;
+
+  return text.slice(match[0].length).trimStart();
+}
+
 function dropPublisherPreamble(text: string): string {
   const head = text.slice(0, 450);
   let cutAt = -1;
@@ -108,59 +132,19 @@ function dropPublisherPreamble(text: string): string {
 }
 
 /**
- * Function words. Their density is what separates English prose from a list.
- */
-const FUNCTION_WORDS = new Set(
-  `the a an and or but of in on at to for with from by is are was were be been
-   has have had he she it they we you his her their this that as not will would
-   can could there which who when after before over into`
-    .split(/\s+/)
-    .filter(Boolean)
-);
-
-/**
- * Density of function words in a sample — the signal that separates English
- * prose from a list of links. Real reporting runs 0.30–0.37; BBC's global nav
- * ("Home News Sport Weather iPlayer…") and ESPN's author rail
- * ("9hRob Dawson9hESPN News Services11hPA…") both score ~0.
- *
- * Measuring the shape of the text rather than matching each publisher's markup
- * means this keeps working when their markup changes.
- */
-function proseScore(sample: string): number {
-  const tokens = sample
-    .toLowerCase()
-    .replace(/[^a-z\s]/g, ' ')
-    .split(/\s+/)
-    .filter(Boolean);
-
-  if (tokens.length < 12) return 0;
-  return tokens.filter((t) => FUNCTION_WORDS.has(t)).length / tokens.length;
-}
-
-const WINDOW = 300;
-const PROSE_FLOOR = 0.15;
-
-/**
- * Checked *after* trimToProse has had its go, so anything still failing here
- * had no article in it to find. Uses the same narrow window as the repair, so
- * a junk prefix can't be averaged out by good text further down.
- */
-function looksLikeProse(text: string): boolean {
-  return proseScore(text.slice(0, WINDOW)) >= PROSE_FLOOR;
-}
-
-/**
  * When Readability prepends a nav bar or link rail to an otherwise fine
  * article, the article is still in there — so slide forward to where the prose
  * actually starts instead of discarding the story.
+ *
+ * Scored against whichever language fits best, so a Spanish article whose
+ * first 300 characters are a breadcrumb trail gets repaired, not binned.
  */
 function trimToProse(text: string): string {
-  if (proseScore(text.slice(0, WINDOW)) >= PROSE_FLOOR) return text;
+  if (detectLanguage(text.slice(0, WINDOW)).score >= PROSE_FLOOR) return text;
 
   const limit = Math.min(text.length - WINDOW, 3000);
   for (let offset = 50; offset < limit; offset += 50) {
-    if (proseScore(text.slice(offset, offset + WINDOW)) < 0.22) continue;
+    if (detectLanguage(text.slice(offset, offset + WINDOW)).score < 0.22) continue;
 
     // Snap forward to a sentence boundary so we don't start mid-word.
     const rest = text.slice(offset);
@@ -225,7 +209,9 @@ function cleanBody(text: string = '', byline: string = ''): string {
     out = out.replace(LEADING_CREDIT, '').trimStart();
   }
 
-  return trimToProse(dropByline(dropPublisherPreamble(out), byline));
+  return trimToProse(
+    dropByline(dropSectionLabel(dropPublisherPreamble(out)), byline)
+  );
 }
 
 async function extractOne(story: FeedStory): Promise<Extraction> {
@@ -238,6 +224,7 @@ async function extractOne(story: FeedStory): Promise<Extraction> {
     ok: false,
     error: null,
     stub: false,
+    language: 'en',
   };
 
   try {
@@ -266,9 +253,14 @@ async function extractOne(story: FeedStory): Promise<Extraction> {
 
     const byline = normaliseWhitespace(parsed?.byline ?? '');
     const body = cleanBody(parsed?.textContent ?? '', byline);
-    if (body.length >= config.minBodyChars && looksLikeProse(body)) {
+    // Checked *after* trimToProse has had its go, so anything still failing
+    // here had no article in it to find. The same measurement tells us which
+    // language the article is in.
+    const { prose, language } = detectProse(body);
+    if (body.length >= config.minBodyChars && prose) {
       result.body = body;
       result.byline = byline || null;
+      result.language = language;
       result.ok = true;
     } else if (body.length >= config.minBodyChars) {
       // Long enough, but it's a nav bar or link rail rather than an article.
@@ -301,7 +293,8 @@ export async function extractBodies(
   return Promise.all(
     stories.map((story) =>
       limit(async (): Promise<ExtractedStory> => {
-        const { body, byline, ok, error, stub } = await extractOne(story);
+        const { body, byline, ok, error, stub, language } =
+          await extractOne(story);
         return {
           ...story,
           body: ok ? body : story.rssSummary,
@@ -309,6 +302,9 @@ export async function extractBodies(
           bodySource: ok ? 'article' : 'rss',
           extractError: error,
           stub,
+          // With no article body to measure, trust the feed's declared
+          // language rather than guessing from a single headline.
+          language: ok ? language : story.language,
         };
       })
     )

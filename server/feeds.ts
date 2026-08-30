@@ -105,6 +105,11 @@ function isUnsummarisable(item: FeedItem, link: string): boolean {
   const liveBlog =
     /\/live\//i.test(link) ||
     /\blive[_-]blog\b/i.test(link) ||
+    // Spanish outlets label running coverage "en directo" / "en vivo", and
+    // Mundo Deportivo puts it in both the URL and the headline.
+    /\/(?:directo|en-directo|en-vivo)\//i.test(link) ||
+    /\ben (?:directo|vivo)\b/i.test(title) ||
+    /\bminuto a minuto\b/i.test(title) ||
     // Publishers signpost live coverage with a shouted LIVE in the headline:
     // "Tottenham vs Charlton LIVE:", "Transfer Centre LIVE!"
     /\bLIVE\b/.test(title) ||
@@ -114,15 +119,18 @@ function isUnsummarisable(item: FeedItem, link: string): boolean {
   const videoOrGallery =
     // Includes audio: BBC syndicates Sounds episodes (/sounds/play/…) into the
     // football feed, and a podcast page has a player where the article goes.
-    /\/(?:video|videos|watch|gallery|in-pictures|podcast|podcasts|sounds|programmes|audio|listen)\//i.test(
+    /\/(?:video|videos|vídeos|videos|watch|gallery|galeria|in-pictures|fotos|imagenes|podcast|podcasts|sounds|programmes|audio|listen)\//i.test(
       link
     ) ||
+    /^(?:vídeo|video|fotos|galería|galeria|en imágenes)\s*[:|]/i.test(title) ||
     // Sky's video titles: "'Energy and aggression!' | What will Baleba bring?"
     /^\s*['"“‘][^'"”’]{3,}['"”’]\s*\|/.test(title) ||
     /^(?:watch|video|in pictures|gallery|podcast)\s*[:|]/i.test(title);
 
   const roundUp =
-    /^(?:papers?|gossip|paper talk|rumour(?:s| mill)|transfer round-?up)\s*[:|]/i.test(title);
+    /^(?:papers?|gossip|paper talk|rumour(?:s| mill)|transfer round-?up|rumores|mercado de fichajes en directo)\s*[:|]/i.test(
+      title
+    );
 
   // SEO listings that exist to rank for a search, not to report anything:
   // "What TV channel is X on?", "How to watch", "Predicted line-ups".
@@ -156,6 +164,7 @@ async function fetchSource(source: Source): Promise<FeedStory[]> {
         image: pickImage(item),
         categories: categoriesOf(item),
         unsummarisable: isUnsummarisable(item, link),
+        language: source.language,
       };
     })
     .filter(

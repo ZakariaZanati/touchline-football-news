@@ -25,12 +25,20 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 }
 
 export function fetchNews(
-  { topic = 'all', source = 'all', q = '' }: Partial<Filters> = {},
+  {
+    topic = 'all',
+    source = 'all',
+    country = 'all',
+    club = 'all',
+    q = '',
+  }: Partial<Filters> = {},
   signal?: AbortSignal
 ): Promise<NewsResponse> {
   const params = new URLSearchParams();
   if (topic !== 'all') params.set('topic', topic);
   if (source !== 'all') params.set('source', source);
+  if (country !== 'all') params.set('country', country);
+  if (club !== 'all') params.set('club', club);
   if (q.trim()) params.set('q', q.trim());
 
   const query = params.toString();

@@ -1,9 +1,5 @@
 import { signatureTokens, properNouns, jaccard } from './text.ts';
-import type {
-  ClusterCoverage,
-  ClusteredStory,
-  ExtractedStory,
-} from './types.ts';
+import type { ClusterCoverage, ClusteredStory, TaggedStory } from './types.ts';
 
 /**
  * Cross-source clustering.
@@ -24,11 +20,11 @@ interface Fingerprint {
 }
 
 interface Entry {
-  story: ExtractedStory;
+  story: TaggedStory;
   print: Fingerprint;
 }
 
-function fingerprint(story: ExtractedStory): Fingerprint {
+function fingerprint(story: TaggedStory): Fingerprint {
   const headlineTokens = signatureTokens(story.title);
   // A little body text sharpens the signal without letting long articles
   // dominate the comparison.
@@ -57,7 +53,7 @@ function isSameStory(a: Entry, b: Entry): boolean {
  * Greedy single-pass clustering. Stories arrive newest-first, so the first
  * member of a cluster is its most recent report.
  */
-export function clusterStories(stories: ExtractedStory[]): ClusteredStory[] {
+export function clusterStories(stories: TaggedStory[]): ClusteredStory[] {
   const entries: Entry[] = stories.map((story) => ({
     story,
     print: fingerprint(story),

@@ -57,7 +57,13 @@ export function useNews(filters: Filters): NewsState {
       setError(err instanceof Error ? err.message : String(err));
       setStatus('error');
     }
-  }, [filters.topic, filters.source, filters.q]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [
+    filters.topic,
+    filters.source,
+    filters.country,
+    filters.club,
+    filters.q,
+  ]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     load();

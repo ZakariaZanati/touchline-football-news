@@ -1,6 +1,6 @@
 import 'dotenv/config';
 
-import type { SummaryEngine } from '../shared/types.ts';
+import type { SummaryEngine, TranslatorEngine } from '../shared/types.ts';
 
 const int = (v: string | undefined, fallback: number): number => {
   const n = Number.parseInt(v ?? '', 10);
@@ -16,6 +16,16 @@ export type SummarizerSetting = 'auto' | SummaryEngine;
 
 const summarizerSetting = (v: string | undefined): SummarizerSetting =>
   v === 'extractive' || v === 'claude' ? v : 'auto';
+
+/**
+ * 'auto'   → translate non-English summaries with Claude when a key is set
+ * 'claude' → always translate (errors loudly if no key)
+ * 'off'    → never translate; foreign-language summaries are served as-is
+ */
+export type TranslatorSetting = 'auto' | 'claude' | 'off';
+
+const translatorSetting = (v: string | undefined): TranslatorSetting =>
+  v === 'claude' || v === 'off' ? v : 'auto';
 
 export const config = {
   port: int(process.env.PORT, 8787),
@@ -66,10 +76,31 @@ export const config = {
   // Characters of article body sent to Claude per story. News is inverted
   // pyramid — the first ~2500 chars carry essentially all the facts.
   claudeBodyChars: int(process.env.CLAUDE_BODY_CHARS, 2500),
+
+  // --- Translation ---------------------------------------------------------
+  // Non-English sources are only useful if their summaries end up in English.
+  // The Claude summariser does this inline at no extra cost; the extractive
+  // engine quotes the article verbatim, so its output needs a separate pass.
+  translator: translatorSetting(process.env.TRANSLATOR),
+
+  // Summaries per translation request. Summaries are ~60 words, so a batch is
+  // small and one call covers a lot of stories.
+  translateBatchSize: int(process.env.TRANSLATE_BATCH_SIZE, 12),
 };
 
 export function summarizerEngine(): SummaryEngine {
   if (config.summarizer === 'extractive') return 'extractive';
   if (config.summarizer === 'claude') return 'claude';
   return config.anthropicApiKey ? 'claude' : 'extractive';
+}
+
+/**
+ * Translation needs a model — there is no offline path. With no key, foreign
+ * summaries are served in their own language and labelled, rather than being
+ * dropped or silently pretending to be English.
+ */
+export function translatorEngine(): TranslatorEngine {
+  if (config.translator === 'off') return 'none';
+  if (config.translator === 'claude') return 'claude';
+  return config.anthropicApiKey ? 'claude' : 'none';
 }

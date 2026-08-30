@@ -55,6 +55,9 @@ stories) and by sending only the first ~2,500 characters of each article, which
 in news prose is where all the facts live. The system prompt is marked cacheable
 so repeated refreshes re-read it at a fraction of the input price.
 
+A key also gets you English summaries of the Spanish sources — see
+[Two countries, two languages](#two-countries-two-languages).
+
 ## How it works
 
 ```mermaid
@@ -65,8 +68,10 @@ flowchart TD
     SEL["pipeline.ts · selectFairly<br/>round-robin across outlets, capped at MAX_STORIES"]
     EX["extract.ts<br/>fetch article page, Readability, strip publisher cruft"]
     KEEP["pipeline.ts<br/>drop stubs, re-check relevance with the body"]
+    TAG["clubs.ts<br/>resolve clubs and countries from headline + lede"]
     CL["cluster.ts<br/>merge duplicate coverage, keep the fullest report"]
     SUM["summarize/<br/>Claude in batches of 8, or local extractive"]
+    TR["translate/<br/>bring non-English summaries into English"]
     RK["pipeline.ts<br/>rank, then shape for the client"]
     SNAP[("in-memory snapshot")]
 
@@ -74,9 +79,11 @@ flowchart TD
     F -->|"FeedStory[]"| SEL
     SEL -->|"FeedStory[] capped"| EX
     EX -->|"ExtractedStory[]"| KEEP
-    KEEP -->|"ExtractedStory[]"| CL
+    KEEP -->|"ExtractedStory[]"| TAG
+    TAG -->|"TaggedStory[]"| CL
     CL -->|"ClusteredStory[]"| SUM
-    SUM -->|"SummarisedStory[]"| RK
+    SUM -->|"SummarisedStory[]"| TR
+    TR -->|"SummarisedStory[]"| RK
     RK -->|"Story[]"| SNAP
 ```
 
@@ -85,24 +92,92 @@ Each stage widens the story object and the next stage's signature demands the
 wider one, so a function that runs after extraction cannot be handed a story
 that has not been through it.
 
-1. **Feeds** — publisher RSS from BBC, Guardian, Sky, ESPN, Telegraph,
-   Independent, football.london and the Mirror. Live blogs, video pages,
-   galleries, paper round-ups and "what channel is it on" SEO listings are
-   dropped: none of them compress into "here is what happened".
+1. **Feeds** — publisher RSS from BBC, Guardian, Sky, ESPN, Telegraph and the
+   Independent in England, and Football España, Marca and Mundo Deportivo for
+   Spain. Live blogs, video pages, galleries, paper round-ups and "what channel
+   is it on" SEO listings are dropped, in both languages: none of them compress
+   into "here is what happened".
 2. **Relevance gate** — even football-labelled feeds leak darts and golf, so
    every story is checked against football vocabulary before it costs a fetch.
 3. **Extraction** — the RSS description is one teaser sentence, so each article
    page is fetched once and run through Mozilla's Readability to get the prose
    without nav, ads or newsletter prompts. Publisher-specific cruft (wire
-   credits, datelines, video-player notices) is stripped after.
-4. **Clustering** — ten outlets report the same signing; showing that ten times
+   credits, datelines, video-player notices, Marca's welded-on section labels)
+   is stripped after.
+4. **Tagging** — the clubs a story is about, and from those the country, come
+   from the article itself rather than from the summariser, so the filters work
+   identically whichever engine ran.
+5. **Clustering** — ten outlets report the same signing; showing that ten times
    is the noise this app exists to remove. Stories are grouped by token and
    name overlap, and the most complete report becomes the one summarised, with
    the rest shown as corroboration.
-5. **Summarising** — extractive or Claude, as above.
+6. **Summarising** — extractive or Claude, as above.
+7. **Translation** — anything not already in English is brought into English.
 
 Results are cached in memory and served stale-while-revalidate, so a page load
 never waits on a refresh, and the whole pipeline re-runs every 15 minutes.
+
+## Two countries, two languages
+
+Six of the nine feeds are English, three cover Spanish football — Football
+España in English, Marca and Mundo Deportivo in Spanish. Reading Spanish
+sources took more than adding URLs, because the text layer had an English
+assumption welded into it in a place that failed silently.
+
+**The prose gate.** `extract.ts` tells an article apart from a nav bar by
+measuring function-word density: real reporting runs 0.30-0.37, a list of
+links scores about zero. That list was English, so every Spanish article
+scored zero and was discarded as `not prose` — the feeds would have appeared
+to work while contributing nothing. It now lives in `language.ts`, scores
+against each language it knows, and takes the best fit. The same measurement
+answers both questions at once: *is this prose*, and *what language is it*.
+
+Downstream, the relevance gate, stopwords, topic rules, competition patterns
+and the live-blog filter all learned Spanish. Adding a third language means
+adding word lists, not parsers.
+
+### Everything ends up in English
+
+| Path | How |
+| --- | --- |
+| Claude summariser | Told to answer in English whatever the article's language. Free — it was reading the article anyway. |
+| Extractive summariser | Quotes sentences verbatim, so a Spanish article yields a Spanish summary. `translate/` then rewrites it with Claude. |
+| No API key at all | Nothing can translate. The summary stays Spanish and is labelled with an `Español` badge. |
+
+The translation stage runs on the *summary*, not the article — about sixty
+words instead of 2,500 characters — so a story costs a fraction of what
+summarising it did. In the usual configuration it does nothing at all, because
+Claude has already written English and only extractive output ever reaches it.
+
+There is no offline translator; that would mean shipping a model. The choice
+when there is no key is therefore between dropping foreign stories, showing
+them in Spanish, or pretending they are English. It shows them, and says so.
+`TRANSLATOR=off` makes that the behaviour even when a key is present.
+
+## Filtering by country and club
+
+Country and club describe **the football, not the outlet** — a Guardian story
+about Real Madrid matches `country=spain`. Both come from `clubs.ts`, a
+registry of ~66 clubs with their aliases and country, which is also where
+`relevance.ts` gets its list of clubs, so adding a club teaches the relevance
+gate about it for free.
+
+Detection is deliberately headline-led:
+
+- A club named in the **title** is taken as the subject. Headlines name what
+  they are about.
+- Otherwise only the **lede** is read, and a club needs two mentions there.
+- Anything deeper in the body is background. Reading the whole article filed
+  *"Messi scores 4 as Inter Miami net 7"* under Barcelona, because a Messi
+  story inevitably recounts his career.
+
+Aliases matter more than they look: the Spanish press uses the full name once
+and then writes "el Madrid", "el Barça", "los blancos", "colchoneros". Without
+those, two thirds of Marca's coverage would carry no club tag.
+
+A story's countries come from its clubs; a story with no recognised club falls
+back to the competition its headline and lede name, so *"a La Liga referee was
+suspended"* is still a Spain story.
 
 ## Architecture
 
@@ -211,6 +286,7 @@ the feed down.
 | An article page 403s, times out, or is a video stub | Falls back to that story's RSS summary, tagged `bodySource: 'rss'`. |
 | Readability returns a nav bar rather than prose | The story is dropped as a stub, rather than summarising junk. |
 | A Claude batch errors or refuses | That batch alone falls back to the extractive summariser; the error becomes a warning. The rest of the batches are unaffected. |
+| A translation batch fails, or there is no key | Those summaries stay in their source language, flagged and badged in the UI, rather than being dropped. |
 | The whole refresh throws | `lastError` is set and the previous snapshot keeps serving. |
 | Every feed fails on a cold start | Nothing to serve, so `/api/health` returns 503. |
 
@@ -239,6 +315,8 @@ server/
   extract.ts        article fetch + Readability + de-noising
   cluster.ts        cross-source duplicate grouping
   relevance.ts      football-or-not gate
+  language.ts       language detection + the prose test built on it
+  clubs.ts          club/country registry and detection
   text.ts           tokenising, headline de-baiting, fact extraction
   sources.ts        the feed registry
   types.ts          the pipeline's internal story shapes
@@ -247,6 +325,9 @@ server/
     extractive.ts   local summariser (default)
     claude.ts       batched Claude summariser
     topics.ts       topic + competition tagging
+  translate/
+    index.ts        engine selection, only runs on non-English summaries
+    claude.ts       batched Claude translation of finished summaries
 src/                React 19 SPA (Vite 8, Tailwind 4)
 ```
 
@@ -277,8 +358,8 @@ npm run typecheck   # tsc -b, both projects
 
 | Endpoint | Purpose |
 | --- | --- |
-| `GET /api/news?topic=&source=&q=&limit=` | Summarised stories |
-| `GET /api/sources` | Feed registry and topic list |
+| `GET /api/news?topic=&source=&country=&club=&q=&limit=` | Summarised stories |
+| `GET /api/sources` | Feed, topic, country and club registries |
 | `GET /api/meta` | Last refresh, engine, per-feed status, warnings |
 | `GET /api/health` | 200/503 for uptime checks |
 | `POST /api/refresh` | Force a refresh |
@@ -292,6 +373,9 @@ Everything is optional — see `.env.example`. The two worth knowing:
 - **`USER_AGENT`** — identify honestly. Several publishers' bot protection
   serves an empty HTTP 202 to a spoofed desktop-Chrome UA that plainly isn't a
   browser, while serving a declared feed reader without complaint.
+- **`TRANSLATOR`** (`auto` / `claude` / `off`) — whether non-English summaries
+  are brought into English. `auto` uses Claude when a key is present and does
+  nothing otherwise; see above for why there is no third option.
 
 ## Notes on being a good citizen
 
