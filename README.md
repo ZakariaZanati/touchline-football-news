@@ -57,9 +57,33 @@ so repeated refreshes re-read it at a fraction of the input price.
 
 ## How it works
 
+```mermaid
+%%{init: {'flowchart': {'wrappingWidth': 360}}}%%
+flowchart TD
+    RSS(["8 publisher RSS feeds"])
+    F["feeds.ts<br/>parse, canonicalise, drop live blogs / video / SEO listings"]
+    SEL["pipeline.ts · selectFairly<br/>round-robin across outlets, capped at MAX_STORIES"]
+    EX["extract.ts<br/>fetch article page, Readability, strip publisher cruft"]
+    KEEP["pipeline.ts<br/>drop stubs, re-check relevance with the body"]
+    CL["cluster.ts<br/>merge duplicate coverage, keep the fullest report"]
+    SUM["summarize/<br/>Claude in batches of 8, or local extractive"]
+    RK["pipeline.ts<br/>rank, then shape for the client"]
+    SNAP[("in-memory snapshot")]
+
+    RSS --> F
+    F -->|"FeedStory[]"| SEL
+    SEL -->|"FeedStory[] capped"| EX
+    EX -->|"ExtractedStory[]"| KEEP
+    KEEP -->|"ExtractedStory[]"| CL
+    CL -->|"ClusteredStory[]"| SUM
+    SUM -->|"SummarisedStory[]"| RK
+    RK -->|"Story[]"| SNAP
 ```
-RSS feeds  →  relevance gate  →  article extraction  →  clustering  →  summarise
-```
+
+The edge labels are the real types, from `server/types.ts` and `shared/types.ts`.
+Each stage widens the story object and the next stage's signature demands the
+wider one, so a function that runs after extraction cannot be handed a story
+that has not been through it.
 
 1. **Feeds** — publisher RSS from BBC, Guardian, Sky, ESPN, Telegraph,
    Independent, football.london and the Mirror. Live blogs, video pages,
@@ -79,6 +103,129 @@ RSS feeds  →  relevance gate  →  article extraction  →  clustering  →  s
 
 Results are cached in memory and served stale-while-revalidate, so a page load
 never waits on a refresh, and the whole pipeline re-runs every 15 minutes.
+
+## Architecture
+
+### Where the code runs
+
+One Node process holds everything server-side: the HTTP API, the story
+snapshot, and the refresh pipeline that fills it. There is no database, no
+queue and no worker — the "cache" is a module-level object in `pipeline.ts`,
+and the scheduler is a `setInterval`.
+
+```mermaid
+flowchart LR
+    B["Browser<br/>React 19 SPA"]
+
+    subgraph devonly["dev only"]
+        V["Vite :5173<br/>proxies /api → :8787"]
+    end
+
+    subgraph proc["Node process :8787"]
+        A["Express<br/>/api/* + static dist/"]
+        SNAP[("story snapshot<br/>in memory")]
+        P["refresh pipeline<br/>every REFRESH_MINUTES"]
+    end
+
+    OUT(["publisher feeds + article pages"])
+    CLD(["Anthropic API"])
+
+    B -->|"dev"| V
+    V --> A
+    B -->|"prod: one origin"| A
+    A -->|"reads"| SNAP
+    P -->|"replaces"| SNAP
+    P --> OUT
+    P -.->|"only if ANTHROPIC_API_KEY is set"| CLD
+```
+
+In development the two halves are separate processes and Vite proxies `/api`
+to the API, which keeps the frontend on a single origin so the client needs no
+CORS handling. In production Express serves `dist/` itself when the directory
+exists, with a catch-all that returns `index.html` for anything not under
+`/api/` — same origin, one port, one process.
+
+### Reads never wait on the network
+
+The pipeline is slow: it fetches ~90 article pages and, with a key set, calls
+Claude a dozen times. No HTTP request is ever allowed to block on it.
+`GET /api/news` reads the snapshot and returns; if the snapshot has gone stale
+it kicks off a refresh on the way past and does not await it.
+
+```mermaid
+sequenceDiagram
+    participant B as Browser
+    participant API as Express
+    participant S as Snapshot
+    participant P as Pipeline
+
+    B->>API: GET /api/news?topic=transfer
+    API->>S: getStories()
+    opt snapshot older than REFRESH_MINUTES
+        S->>P: start a refresh, not awaited
+    end
+    S-->>API: whatever is in memory now
+    API-->>B: filtered + ranked response
+    Note over P: feeds → extract → cluster → summarise
+    P->>S: swap in the new snapshot
+```
+
+Refreshes are single-flight: `refresh()` returns the in-flight promise if one
+is already running, so ten concurrent requests that all find a stale snapshot
+cause one scrape, not ten. `POST /api/refresh` sets `force: true`, which skips
+the freshness check but still joins an existing run rather than starting a
+second.
+
+Filtering (`topic`, `source`, `q`, `limit`) happens server-side against the
+snapshot, so the client never holds the full corpus and the search box can fire
+per keystroke — each request aborts the last via `AbortController`.
+
+### Three caches, three lifetimes
+
+| Cache | Lives in | TTL | Why |
+| --- | --- | --- | --- |
+| Article bodies, keyed by URL | `extract.ts`, in memory | `ARTICLE_CACHE_MINUTES`, default 6 h | Article text does not change, so a page is fetched at most once per window. Failures are cached too — a 403 is not retried for six hours. Capped at 800 entries, oldest 200 evicted. |
+| The story snapshot | `pipeline.ts`, in memory | `REFRESH_MINUTES`, default 15 m | What every read is served from. |
+| Claude's system prompt | Anthropic, server-side | ephemeral | Marked `cache_control`, so each refresh re-reads the instructions at a fraction of the input price instead of re-paying for them. |
+
+Everything is in-process, so a restart starts cold. That is the trade this
+design makes deliberately: no infrastructure to run, at the cost of a slow
+first refresh after boot.
+
+### Bounded concurrency
+
+Three separate limits, so a refresh never opens a hundred sockets at once:
+`FEED_CONCURRENCY` (6) for feeds, `ARTICLE_CONCURRENCY` (5) for article pages,
+and a fixed 3 for in-flight Claude batches. Feed and article fetches also carry
+12-second timeouts.
+
+### Every stage degrades instead of failing
+
+The pipeline is a chain of best-effort stages: a failure at any one of them
+narrows the output rather than emptying it. Nothing in the table below takes
+the feed down.
+
+| What goes wrong | What happens |
+| --- | --- |
+| One feed times out or 500s | Recorded in `feedStatus` and surfaced as a pipeline notice; the other seven are unaffected. |
+| An article page 403s, times out, or is a video stub | Falls back to that story's RSS summary, tagged `bodySource: 'rss'`. |
+| Readability returns a nav bar rather than prose | The story is dropped as a stub, rather than summarising junk. |
+| A Claude batch errors or refuses | That batch alone falls back to the extractive summariser; the error becomes a warning. The rest of the batches are unaffected. |
+| The whole refresh throws | `lastError` is set and the previous snapshot keeps serving. |
+| Every feed fails on a cold start | Nothing to serve, so `/api/health` returns 503. |
+
+Warnings are collected rather than swallowed: `GET /api/meta` reports per-feed
+status, how many articles fell back to RSS, how many stubs were filtered, and
+any summariser errors. The UI shows the count in a collapsible footer.
+
+### Two engines behind one interface
+
+`summarize/index.ts` picks an engine at runtime and both satisfy the same
+`Summary` shape, so nothing downstream knows which ran. The extractive engine
+is the default so the app works the moment it is cloned; setting
+`ANTHROPIC_API_KEY` upgrades every summary with no other change. `SUMMARIZER`
+can pin the choice either way. The engine that actually ran is reported in
+`/api/meta` and shown in the header.
 
 ## Layout
 
