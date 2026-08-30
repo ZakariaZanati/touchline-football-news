@@ -1,0 +1,10 @@
+{
+  // Solution file. The frontend and the server run in different environments
+  // (browser vs Node), so each gets its own project rather than one config
+  // trying to describe both. `tsc -b` builds them together.
+  "files": [],
+  "references": [
+    { "path": "./tsconfig.app.json" },
+    { "path": "./tsconfig.node.json" }
+  ]
+}

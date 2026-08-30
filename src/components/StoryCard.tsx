@@ -1,14 +1,21 @@
 import { useState } from 'react';
+import type { ReactNode } from 'react';
 
+import type { Story } from '../../shared/types.ts';
 import {
   timeAgo,
   duration,
   hostOf,
   TOPIC_STYLES,
   TOPIC_LABELS,
-} from '../lib/format.js';
+} from '../lib/format.ts';
 
-function Chip({ children, className = '' }) {
+interface ChipProps {
+  children: ReactNode;
+  className?: string;
+}
+
+function Chip({ children, className = '' }: ChipProps) {
   return (
     <span
       className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium ring-1 ring-inset ${className}`}
@@ -25,7 +32,13 @@ function Chip({ children, className = '' }) {
  * engagement bait. The summary is the product — the link to the original is
  * there for anyone who wants the long version, not as the point of the card.
  */
-export default function StoryCard({ story, index }) {
+interface StoryCardProps {
+  story: Story;
+  /** Position in the list, used to stagger the entry animation. */
+  index: number;
+}
+
+export default function StoryCard({ story, index }: StoryCardProps) {
   const [showSources, setShowSources] = useState(false);
 
   const saved = duration(story.savedSeconds);

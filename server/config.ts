@@ -1,9 +1,21 @@
 import 'dotenv/config';
 
-const int = (v, fallback) => {
+import type { SummaryEngine } from '../shared/types.ts';
+
+const int = (v: string | undefined, fallback: number): number => {
   const n = Number.parseInt(v ?? '', 10);
   return Number.isFinite(n) ? n : fallback;
 };
+
+/**
+ * 'auto'       → use Claude when ANTHROPIC_API_KEY is set, else extractive
+ * 'extractive' → always use the local, zero-dependency summariser
+ * 'claude'     → always use Claude (errors loudly if no key)
+ */
+export type SummarizerSetting = 'auto' | SummaryEngine;
+
+const summarizerSetting = (v: string | undefined): SummarizerSetting =>
+  v === 'extractive' || v === 'claude' ? v : 'auto';
 
 export const config = {
   port: int(process.env.PORT, 8787),
@@ -42,10 +54,7 @@ export const config = {
   minBodyChars: int(process.env.MIN_BODY_CHARS, 420),
 
   // --- Summarisation -------------------------------------------------------
-  // 'auto'       → use Claude when ANTHROPIC_API_KEY is set, else extractive
-  // 'extractive' → always use the local, zero-dependency summariser
-  // 'claude'     → always use Claude (errors loudly if no key)
-  summarizer: process.env.SUMMARIZER ?? 'auto',
+  summarizer: summarizerSetting(process.env.SUMMARIZER),
 
   anthropicApiKey: process.env.ANTHROPIC_API_KEY ?? '',
   anthropicModel: process.env.ANTHROPIC_MODEL ?? 'claude-opus-5',
@@ -59,7 +68,7 @@ export const config = {
   claudeBodyChars: int(process.env.CLAUDE_BODY_CHARS, 2500),
 };
 
-export function summarizerEngine() {
+export function summarizerEngine(): SummaryEngine {
   if (config.summarizer === 'extractive') return 'extractive';
   if (config.summarizer === 'claude') return 'claude';
   return config.anthropicApiKey ? 'claude' : 'extractive';

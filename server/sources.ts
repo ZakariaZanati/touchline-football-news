@@ -1,3 +1,5 @@
+import type { Source } from './types.ts';
+
 /**
  * Feed registry.
  *
@@ -8,7 +10,7 @@
  * `trust` breaks ties when the same story is reported by several outlets: the
  * highest-trust member of a cluster becomes the one we summarise.
  */
-export const SOURCES = [
+export const SOURCES: Source[] = [
   {
     id: 'bbc',
     name: 'BBC Sport',

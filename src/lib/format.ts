@@ -1,5 +1,7 @@
 /** Compact relative time: "just now", "12m ago", "3h ago", "Tue". */
-export function timeAgo(iso) {
+import type { TopicId } from '../../shared/types.ts';
+
+export function timeAgo(iso: string): string {
   const then = Date.parse(iso);
   if (!Number.isFinite(then)) return '';
 
@@ -16,7 +18,7 @@ export function timeAgo(iso) {
 }
 
 /** "1m 40s" / "45s" — used for the reading time we saved you. */
-export function duration(seconds) {
+export function duration(seconds: number): string | null {
   if (!Number.isFinite(seconds) || seconds < 1) return null;
   if (seconds < 60) return `${Math.round(seconds)}s`;
   const minutes = Math.floor(seconds / 60);
@@ -24,7 +26,7 @@ export function duration(seconds) {
   return rest ? `${minutes}m ${rest}s` : `${minutes}m`;
 }
 
-export function hostOf(url) {
+export function hostOf(url: string): string {
   try {
     return new URL(url).hostname.replace(/^www\./, '');
   } catch {
@@ -32,7 +34,7 @@ export function hostOf(url) {
   }
 }
 
-export const TOPIC_STYLES = {
+export const TOPIC_STYLES: Record<TopicId, string> = {
   transfer: 'bg-pitch-500/12 text-pitch-700 dark:text-pitch-300 ring-pitch-500/25',
   match: 'bg-sky-500/12 text-sky-700 dark:text-sky-300 ring-sky-500/25',
   injury: 'bg-rose-500/12 text-rose-700 dark:text-rose-300 ring-rose-500/25',
@@ -42,7 +44,7 @@ export const TOPIC_STYLES = {
   other: 'bg-ink-500/12 text-ink-600 dark:text-ink-300 ring-ink-500/25',
 };
 
-export const TOPIC_LABELS = {
+export const TOPIC_LABELS: Record<TopicId, string> = {
   transfer: 'Transfer',
   match: 'Match',
   injury: 'Injury',

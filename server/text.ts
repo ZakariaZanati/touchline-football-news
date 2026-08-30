@@ -24,7 +24,7 @@ const WEAK_TOKENS = new Set(
     .filter(Boolean)
 );
 
-export function normaliseWhitespace(str = '') {
+export function normaliseWhitespace(str: string = ''): string {
   return String(str).replace(/\s+/g, ' ').trim();
 }
 
@@ -35,11 +35,11 @@ export function normaliseWhitespace(str = '') {
  * hour, so without this the clustering treats ESPN's "Martínez" and Sky's
  * "Martinez" as two unrelated people and never groups their coverage.
  */
-export function foldAccents(str = '') {
+export function foldAccents(str: string = ''): string {
   return String(str).normalize('NFD').replace(/[̀-ͯ]/g, '');
 }
 
-export function stripHtml(html = '') {
+export function stripHtml(html: string = ''): string {
   return normaliseWhitespace(
     String(html)
       .replace(/<script[\s\S]*?<\/script>/gi, ' ')
@@ -55,7 +55,7 @@ export function stripHtml(html = '') {
 }
 
 /** Lowercase word tokens with stopwords removed. Keeps digits (scores, fees). */
-export function tokenise(str = '') {
+export function tokenise(str: string = ''): string[] {
   return foldAccents(normaliseWhitespace(str))
     .toLowerCase()
     .replace(/[^a-z0-9\s-]/g, ' ')
@@ -68,11 +68,11 @@ export function tokenise(str = '') {
  * "Arsenal sign Silva" and "Arsenal beat Chelsea" don't look similar just
  * because they share the word "football".
  */
-export function signatureTokens(str = '') {
+export function signatureTokens(str: string = ''): Set<string> {
   return new Set(tokenise(str).filter((t) => !WEAK_TOKENS.has(t)));
 }
 
-export function jaccard(a, b) {
+export function jaccard(a: ReadonlySet<string>, b: ReadonlySet<string>): number {
   if (!a.size || !b.size) return 0;
   let shared = 0;
   for (const t of a) if (b.has(t)) shared += 1;
@@ -80,12 +80,12 @@ export function jaccard(a, b) {
 }
 
 /** Capitalised multi-word runs — a cheap proxy for names of people and clubs. */
-export function properNouns(str = '') {
-  const out = new Set();
+export function properNouns(str: string = ''): Set<string> {
+  const out = new Set<string>();
   // Fold first so "Martínez" and "Martinez" produce the same entry.
   const text = foldAccents(str);
   const re = /\b([A-Z][a-z''-]{2,}(?:\s+[A-Z][a-z''-]{2,})*)\b/g;
-  let m;
+  let m: RegExpExecArray | null;
   while ((m = re.exec(text)) !== null) {
     const phrase = m[1];
     // Skip a sentence-initial single word — usually not a name.
@@ -98,11 +98,11 @@ export function properNouns(str = '') {
 const ABBREVIATIONS = /\b(?:Mr|Mrs|Ms|Dr|St|Sr|Jr|vs|No|Nos|Fig|approx|c)\.$/i;
 
 /** Sentence splitter that doesn't break on "St." / "No. 6" / "1.5m". */
-export function splitSentences(text = '') {
+export function splitSentences(text: string = ''): string[] {
   const clean = normaliseWhitespace(text);
   if (!clean) return [];
 
-  const parts = [];
+  const parts: string[] = [];
   let buffer = '';
 
   for (const chunk of clean.split(/(?<=[.!?])\s+/)) {
@@ -139,7 +139,16 @@ const BAIT_PHRASES =
  * Newcastle sign Gonzalez` — where the informative half sits after the colon
  * and the quote exists purely to make you click. We keep the informative half.
  */
-export function deBaitHeadline(rawTitle = '', firstSentence = '') {
+export interface DeBaitedHeadline {
+  headline: string;
+  /** True when we changed the publisher's wording, not just trimmed it. */
+  rewritten: boolean;
+}
+
+export function deBaitHeadline(
+  rawTitle: string = '',
+  firstSentence: string = ''
+): DeBaitedHeadline {
   let title = normaliseWhitespace(rawTitle);
   let rewritten = false;
 
@@ -201,14 +210,38 @@ export function deBaitHeadline(rawTitle = '', firstSentence = '') {
 
 // --- Hard-fact extraction --------------------------------------------------
 
-const FACT_PATTERNS = [
+export type FactKind =
+  | 'money'
+  | 'score'
+  | 'contract'
+  | 'age'
+  | 'tally'
+  | 'duration';
+
+/** A hard number pulled out of an article, with enough context to read it. */
+export interface Fact {
+  kind: FactKind;
+  value: string;
+  context: string;
+  /** Character offset in the source text; used to prefer facts from the lede. */
+  at: number;
+}
+
+interface FactPattern {
+  kind: FactKind;
+  re: RegExp;
+  /** Normalises publisher-specific spellings of the same value. */
+  tidy?: (value: string) => string;
+}
+
+const FACT_PATTERNS: FactPattern[] = [
   // Fees and wages: £50m, €12.5 million, $30m, £250,000-a-week
   {
     kind: 'money',
     re: /(?:[£€$]\s?\d[\d.,]*\s?(?:m|bn|k|million|billion|thousand)?(?:-a-(?:week|year))?)/gi,
     // Publishers write "£60 m", "£50M" and "£60m" interchangeably. Collapse
     // the abbreviated suffixes but leave spelled-out words ("£3 billion").
-    tidy: (v) =>
+    tidy: (v: string) =>
       v
         .replace(/([£€$])\s+/, '$1')
         .replace(/(\d)\s+(m|bn|k)\b/i, '$1$2')
@@ -243,13 +276,13 @@ const FACT_PATTERNS = [
  * Pulls the concrete numbers out of an article — the bits a reader actually
  * wants and that clickbait headlines deliberately withhold.
  */
-export function extractFacts(text = '', limit = 4) {
-  const seen = new Set();
-  const facts = [];
+export function extractFacts(text: string = '', limit: number = 4): Fact[] {
+  const seen = new Set<string>();
+  const facts: Fact[] = [];
 
   for (const { kind, re, tidy } of FACT_PATTERNS) {
     re.lastIndex = 0;
-    let m;
+    let m: RegExpExecArray | null;
     while ((m = re.exec(text)) !== null) {
       const value = tidy
         ? tidy(normaliseWhitespace(m[0]))
@@ -271,14 +304,21 @@ export function extractFacts(text = '', limit = 4) {
   // Money and scorelines are the highest-signal facts; ages the lowest. Within
   // a kind, prefer whatever appears earliest — a roundup article mentions many
   // fees, and the one this story is about is the one in the lede.
-  const rank = { money: 0, score: 1, contract: 2, tally: 3, duration: 4, age: 5 };
+  const rank: Record<FactKind, number> = {
+    money: 0,
+    score: 1,
+    contract: 2,
+    tally: 3,
+    duration: 4,
+    age: 5,
+  };
   facts.sort((a, b) => rank[a.kind] - rank[b.kind] || a.at - b.at);
 
   return facts.slice(0, limit);
 }
 
 /** Rough read time in seconds, at ~240 wpm. */
-export function readSeconds(text = '') {
+export function readSeconds(text: string = ''): number {
   const words = normaliseWhitespace(text).split(/\s+/).filter(Boolean).length;
   return Math.max(5, Math.round((words / 240) * 60));
 }

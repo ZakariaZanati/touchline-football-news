@@ -1,16 +1,18 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
-import Header from './components/Header.jsx';
-import FilterBar from './components/FilterBar.jsx';
-import StoryCard from './components/StoryCard.jsx';
-import { SkeletonList, EmptyState, ErrorState } from './components/States.jsx';
-import { useNews } from './hooks/useNews.js';
-import { fetchSources } from './api.js';
-import { duration } from './lib/format.js';
+import Header from './components/Header.tsx';
+import FilterBar from './components/FilterBar.tsx';
+import StoryCard from './components/StoryCard.tsx';
+import { SkeletonList, EmptyState, ErrorState } from './components/States.tsx';
+import { useNews } from './hooks/useNews.ts';
+import { fetchSources } from './api.ts';
+import { duration } from './lib/format.ts';
+import type { SourceInfo } from '../shared/types.ts';
+import type { Filters } from './types.ts';
 
-const DEFAULT_FILTERS = { topic: 'all', source: 'all', q: '' };
+const DEFAULT_FILTERS: Filters = { topic: 'all', source: 'all', q: '' };
 
-function useTheme() {
+function useTheme(): [boolean, () => void] {
   const [dark, setDark] = useState(() =>
     document.documentElement.classList.contains('dark')
   );
@@ -28,8 +30,8 @@ function useTheme() {
 }
 
 export default function App() {
-  const [filters, setFilters] = useState(DEFAULT_FILTERS);
-  const [sources, setSources] = useState([]);
+  const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
+  const [sources, setSources] = useState<SourceInfo[]>([]);
   const [dark, toggleTheme] = useTheme();
 
   const { stories, meta, status, error, refreshing, refresh, reload } =
@@ -45,7 +47,7 @@ export default function App() {
     return () => controller.abort();
   }, []);
 
-  const updateFilters = useCallback((patch) => {
+  const updateFilters = useCallback((patch: Partial<Filters>) => {
     setFilters((current) => ({ ...current, ...patch }));
   }, []);
 
@@ -113,7 +115,7 @@ export default function App() {
             they link to. Every card links back to the original reporting —
             the outlets did the journalism.
           </p>
-          {meta?.warnings?.length > 0 && (
+          {meta && meta.warnings.length > 0 && (
             <details className="mt-2">
               <summary className="cursor-pointer select-none hover:text-ink-600 dark:hover:text-ink-300">
                 {meta.warnings.length} pipeline notice

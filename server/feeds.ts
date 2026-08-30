@@ -2,12 +2,36 @@ import Parser from 'rss-parser';
 import pLimit from 'p-limit';
 import crypto from 'node:crypto';
 
-import { config } from './config.js';
-import { SOURCES } from './sources.js';
-import { isFootball } from './relevance.js';
-import { stripHtml, normaliseWhitespace } from './text.js';
+import { config } from './config.ts';
+import { errorMessage } from './errors.ts';
+import { SOURCES } from './sources.ts';
+import { isFootball } from './relevance.ts';
+import { stripHtml, normaliseWhitespace } from './text.ts';
+import type { FeedStory, Source } from './types.ts';
+import type { FeedStatus } from '../shared/types.ts';
 
-const parser = new Parser({
+/** A `<media:*>` node as xml2js hands it back. */
+interface MediaNode {
+  $?: { url?: string };
+}
+
+/** The non-standard fields we ask rss-parser to keep for us. */
+interface CustomItemFields {
+  mediaContent?: MediaNode[];
+  mediaThumbnail?: MediaNode[];
+  /** A few feeds use a bare `<date>` instead of `<pubDate>`. */
+  date?: string;
+}
+
+type FeedItem = Parser.Item & CustomItemFields;
+
+/**
+ * rss-parser types `categories` as `string[]`, but Atom feeds deliver objects
+ * (`{ $: { term } }`) and some RSS feeds deliver `{ _: 'label' }`.
+ */
+type RawCategory = string | { _?: string; $?: { term?: string } };
+
+const parser = new Parser<Record<string, unknown>, CustomItemFields>({
   timeout: config.feedTimeout,
   headers: {
     'user-agent': config.userAgent,
@@ -21,12 +45,12 @@ const parser = new Parser({
   },
 });
 
-function stableId(link) {
+function stableId(link: string): string {
   return crypto.createHash('sha1').update(link).digest('hex').slice(0, 16);
 }
 
 /** Strip tracking params so the same article from two feeds dedupes cleanly. */
-function canonicalUrl(rawLink) {
+function canonicalUrl(rawLink: string): string {
   try {
     const url = new URL(rawLink);
     for (const key of [...url.searchParams.keys()]) {
@@ -41,27 +65,27 @@ function canonicalUrl(rawLink) {
   }
 }
 
-function pickImage(item) {
+function pickImage(item: FeedItem): string | null {
   const candidates = [
     item.enclosure?.url,
     ...(item.mediaContent ?? []).map((m) => m?.$?.url),
     ...(item.mediaThumbnail ?? []).map((m) => m?.$?.url),
-  ].filter(Boolean);
+  ].filter((u): u is string => Boolean(u));
 
   const image = candidates.find((u) => /^https?:\/\//i.test(u));
   return image ?? null;
 }
 
-function parseDate(item) {
+function parseDate(item: FeedItem): number {
   const raw = item.isoDate ?? item.pubDate ?? item.date;
   const ts = raw ? Date.parse(raw) : Number.NaN;
   return Number.isFinite(ts) ? ts : Date.now();
 }
 
-function categoriesOf(item) {
-  const raw = item.categories ?? [];
+function categoriesOf(item: FeedItem): string[] {
+  const raw = (item.categories ?? []) as RawCategory[];
   return raw
-    .map((c) => (typeof c === 'string' ? c : c?._ ?? c?.$?.term ?? ''))
+    .map((c) => (typeof c === 'string' ? c : (c?._ ?? c?.$?.term ?? '')))
     .map((c) => normaliseWhitespace(c))
     .filter(Boolean)
     .slice(0, 6);
@@ -75,7 +99,7 @@ function categoriesOf(item) {
  * caption where the article should be. Paper round-ups are aggregated rumour,
  * which is the opposite of what this app is for.
  */
-function isUnsummarisable(item, link) {
+function isUnsummarisable(item: FeedItem, link: string): boolean {
   const title = item.title ?? '';
 
   const liveBlog =
@@ -110,21 +134,21 @@ function isUnsummarisable(item, link) {
   return liveBlog || videoOrGallery || roundUp || seoListing;
 }
 
-async function fetchSource(source) {
+async function fetchSource(source: Source): Promise<FeedStory[]> {
   const feed = await parser.parseURL(source.url);
   const cutoff = Date.now() - config.maxAgeHours * 3600_000;
 
   return (feed.items ?? [])
     .filter((item) => item.link && item.title)
-    .map((item) => {
-      const link = canonicalUrl(item.link);
+    .map((item): FeedStory => {
+      const link = canonicalUrl(item.link!);
       return {
         id: stableId(link),
         url: link,
         sourceId: source.id,
         sourceName: source.name,
         trust: source.trust,
-        title: normaliseWhitespace(item.title),
+        title: normaliseWhitespace(item.title!),
         rssSummary: stripHtml(
           item.contentSnippet ?? item.content ?? item.summary ?? ''
         ).slice(0, 900),
@@ -146,7 +170,12 @@ async function fetchSource(source) {
  * Fetches every registered feed. One bad feed never fails the batch — its
  * error is reported alongside the items we did get.
  */
-export async function fetchAllFeeds() {
+export interface FeedHarvest {
+  items: FeedStory[];
+  feedStatus: FeedStatus[];
+}
+
+export async function fetchAllFeeds(): Promise<FeedHarvest> {
   const limit = pLimit(config.feedConcurrency);
 
   const settled = await Promise.all(
@@ -154,16 +183,16 @@ export async function fetchAllFeeds() {
       limit(async () => {
         try {
           const items = await fetchSource(source);
-          return { source, items, error: null };
+          return { source, items, error: null as string | null };
         } catch (error) {
-          return { source, items: [], error: error.message };
+          return { source, items: [] as FeedStory[], error: errorMessage(error) };
         }
       })
     )
   );
 
   // Same URL can appear in more than one feed — keep the highest-trust copy.
-  const byUrl = new Map();
+  const byUrl = new Map<string, FeedStory>();
   for (const { items } of settled) {
     for (const item of items) {
       const existing = byUrl.get(item.url);

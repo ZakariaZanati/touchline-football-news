@@ -1,10 +1,29 @@
 import Anthropic from '@anthropic-ai/sdk';
 import pLimit from 'p-limit';
 
-import { config } from '../config.js';
-import { normaliseWhitespace } from '../text.js';
-import { summariseExtractive } from './extractive.js';
-import { TOPICS, normaliseTopic, classifyCompetition } from './topics.js';
+import { config } from '../config.ts';
+import { errorMessage } from '../errors.ts';
+import { normaliseWhitespace } from '../text.ts';
+import { summariseExtractive } from './extractive.ts';
+import { TOPICS, normaliseTopic, classifyCompetition } from './topics.ts';
+import type { ClusteredStory, Summary, SummarisedStory } from '../types.ts';
+import type { TokenUsage } from '../../shared/types.ts';
+
+/**
+ * One entry as Claude returns it. Structured outputs make the schema binding,
+ * but the fields are still treated as optional here — a summary is not worth
+ * failing a refresh over, and `adopt` has a sensible answer for each gap.
+ */
+interface RawSummary {
+  id: string;
+  headline?: string;
+  bottomLine?: string;
+  keyFacts?: string[];
+  topic?: string;
+  competition?: string;
+  clubs?: string[];
+  importance?: number;
+}
 
 /**
  * Claude-backed summarisation.
@@ -19,8 +38,8 @@ import { TOPICS, normaliseTopic, classifyCompetition } from './topics.js';
  * a fraction of the input price instead of re-paying for it each time.
  */
 
-let client = null;
-function getClient() {
+let client: Anthropic | null = null;
+function getClient(): Anthropic {
   if (!client) {
     client = new Anthropic({ apiKey: config.anthropicApiKey || undefined });
   }
@@ -46,7 +65,7 @@ Rules that override everything else:
 - If an article is speculation ("could", "eyeing", "linked with"), say so in the bottomLine rather than reporting it as settled.
 - Return exactly one entry per input article, echoing its id verbatim.`;
 
-const SUMMARY_SCHEMA = {
+const SUMMARY_SCHEMA: Anthropic.JSONOutputFormat['schema'] = {
   type: 'object',
   properties: {
     summaries: {
@@ -81,7 +100,7 @@ const SUMMARY_SCHEMA = {
   additionalProperties: false,
 };
 
-function renderBatch(stories) {
+function renderBatch(stories: ClusteredStory[]): string {
   return stories
     .map((story, i) => {
       const body = normaliseWhitespace(story.body ?? '').slice(
@@ -99,12 +118,19 @@ function renderBatch(stories) {
     .join('\n\n');
 }
 
-function firstTextBlock(message) {
-  const block = message.content.find((b) => b.type === 'text');
+function firstTextBlock(message: Anthropic.Message): string {
+  const block = message.content.find(
+    (b): b is Anthropic.TextBlock => b.type === 'text'
+  );
   return block?.text ?? '';
 }
 
-async function summariseBatch(stories) {
+interface BatchResult {
+  byId: Map<string, RawSummary>;
+  usage: TokenUsage;
+}
+
+async function summariseBatch(stories: ClusteredStory[]): Promise<BatchResult> {
   const response = await getClient().messages.create({
     model: config.anthropicModel,
     max_tokens: 8000,
@@ -138,9 +164,11 @@ async function summariseBatch(stories) {
     throw new Error('hit max_tokens — response truncated');
   }
 
-  const parsed = JSON.parse(firstTextBlock(response));
+  const parsed = JSON.parse(firstTextBlock(response)) as {
+    summaries?: RawSummary[];
+  };
   const byId = new Map(
-    (parsed.summaries ?? []).map((s) => [String(s.id), s])
+    (parsed.summaries ?? []).map((s): [string, RawSummary] => [String(s.id), s])
   );
 
   return {
@@ -154,7 +182,7 @@ async function summariseBatch(stories) {
   };
 }
 
-function adopt(story, raw) {
+function adopt(story: ClusteredStory, raw: RawSummary): Summary {
   const haystack = `${story.title} ${story.body ?? ''}`;
   const competition = normaliseWhitespace(raw.competition ?? '');
 
@@ -171,9 +199,10 @@ function adopt(story, raw) {
     topic: normaliseTopic(raw.topic),
     competition: competition || classifyCompetition(haystack),
     clubs: (raw.clubs ?? []).map((c) => normaliseWhitespace(c)).filter(Boolean).slice(0, 3),
-    importance: Number.isFinite(raw.importance)
-      ? Math.min(5, Math.max(1, Math.round(raw.importance)))
-      : 3,
+    importance:
+      typeof raw.importance === 'number' && Number.isFinite(raw.importance)
+        ? Math.min(5, Math.max(1, Math.round(raw.importance)))
+        : 3,
     engine: 'claude',
   };
 }
@@ -183,24 +212,34 @@ function adopt(story, raw) {
  * engine for any batch that fails. A Claude outage degrades the output quality;
  * it never takes the feed down.
  */
-export async function summariseAllWithClaude(stories) {
-  const batches = [];
+export interface ClaudeSummaryResult {
+  stories: SummarisedStory[];
+  usage: TokenUsage;
+  errors: string[];
+}
+
+export async function summariseAllWithClaude(
+  stories: ClusteredStory[]
+): Promise<ClaudeSummaryResult> {
+  const batches: ClusteredStory[][] = [];
   for (let i = 0; i < stories.length; i += config.claudeBatchSize) {
     batches.push(stories.slice(i, i + config.claudeBatchSize));
   }
 
   const limit = pLimit(3);
-  const totals = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
-  const errors = [];
+  const totals: TokenUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+  const errors: string[] = [];
 
   const results = await Promise.all(
     batches.map((batch) =>
       limit(async () => {
         try {
           const { byId, usage } = await summariseBatch(batch);
-          for (const key of Object.keys(totals)) totals[key] += usage[key];
+          for (const key of Object.keys(totals) as (keyof TokenUsage)[]) {
+            totals[key] += usage[key];
+          }
 
-          return batch.map((story) => {
+          return batch.map((story): SummarisedStory => {
             const raw = byId.get(story.id);
             // A story Claude skipped still gets a summary, just a local one.
             return raw
@@ -208,8 +247,8 @@ export async function summariseAllWithClaude(stories) {
               : { ...story, summary: summariseExtractive(story) };
           });
         } catch (error) {
-          errors.push(error.message);
-          return batch.map((story) => ({
+          errors.push(errorMessage(error));
+          return batch.map((story): SummarisedStory => ({
             ...story,
             summary: summariseExtractive(story),
           }));

@@ -1,0 +1,32 @@
+{
+  // The Node side: the API server, the shared wire contract, and the Vite
+  // config. Node 24 strips types at runtime, so nothing here is emitted —
+  // tsc only checks. That is also why server imports carry a `.ts` extension:
+  // Node resolves the specifier literally and does not rewrite it.
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023"],
+    "module": "NodeNext",
+    "moduleResolution": "nodenext",
+    "types": ["node"],
+
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitOverride": true,
+
+    // Node's type stripping erases types without a compiler, so the source
+    // must avoid enums, namespaces and parameter properties.
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    "erasableSyntaxOnly": true,
+
+    "allowImportingTsExtensions": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "noEmit": true
+  },
+  "include": ["server", "shared", "vite.config.ts"]
+}

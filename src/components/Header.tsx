@@ -1,6 +1,12 @@
-import { timeAgo } from '../lib/format.js';
+import { timeAgo } from '../lib/format.ts';
+import type { Meta } from '../../shared/types.ts';
 
-function ThemeToggle({ dark, onToggle }) {
+interface ThemeToggleProps {
+  dark: boolean;
+  onToggle: () => void;
+}
+
+function ThemeToggle({ dark, onToggle }: ThemeToggleProps) {
   return (
     <button
       type="button"
@@ -30,7 +36,21 @@ function ThemeToggle({ dark, onToggle }) {
   );
 }
 
-export default function Header({ meta, dark, onToggleTheme, onRefresh, refreshing }) {
+interface HeaderProps {
+  meta: Meta | null;
+  dark: boolean;
+  onToggleTheme: () => void;
+  onRefresh: () => void;
+  refreshing: boolean;
+}
+
+export default function Header({
+  meta,
+  dark,
+  onToggleTheme,
+  onRefresh,
+  refreshing,
+}: HeaderProps) {
   return (
     <header className="sticky top-0 z-20 border-b border-ink-200/80 bg-ink-50/85 backdrop-blur-md dark:border-ink-800/80 dark:bg-ink-950/85">
       <div className="mx-auto flex max-w-3xl items-center gap-3 px-4 py-3">

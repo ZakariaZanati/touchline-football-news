@@ -5,15 +5,22 @@ import fs from 'node:fs';
 import express from 'express';
 import cors from 'cors';
 
-import { config } from './config.js';
-import { SOURCES } from './sources.js';
-import { TOPICS } from './summarize/index.js';
+import { config } from './config.ts';
+import { errorMessage } from './errors.ts';
+import { SOURCES } from './sources.ts';
+import { TOPICS } from './summarize/index.ts';
 import {
   getStories,
   getMeta,
   refresh,
   startBackgroundRefresh,
-} from './pipeline.js';
+} from './pipeline.ts';
+import type {
+  NewsResponse,
+  RefreshResponse,
+  SourcesResponse,
+  Story,
+} from '../shared/types.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const distDir = path.join(__dirname, '..', 'dist');
@@ -23,7 +30,11 @@ app.disable('x-powered-by');
 app.use(cors());
 app.use(express.json({ limit: '128kb' }));
 
-const matchesQuery = (story, query) => {
+/** Reads a query-string value that may arrive repeated or absent. */
+const queryParam = (value: unknown, fallback = ''): string =>
+  typeof value === 'string' ? value : fallback;
+
+const matchesQuery = (story: Story, query: string): boolean => {
   const haystack = [
     story.headline,
     story.bottomLine,
@@ -42,10 +53,13 @@ app.get('/api/news', async (req, res) => {
   try {
     const all = await getStories();
 
-    const topic = String(req.query.topic ?? 'all').toLowerCase();
-    const source = String(req.query.source ?? 'all').toLowerCase();
-    const query = String(req.query.q ?? '').trim().toLowerCase();
-    const limit = Math.min(Number.parseInt(req.query.limit, 10) || 100, 200);
+    const topic = queryParam(req.query.topic, 'all').toLowerCase();
+    const source = queryParam(req.query.source, 'all').toLowerCase();
+    const query = queryParam(req.query.q).trim().toLowerCase();
+    const limit = Math.min(
+      Number.parseInt(queryParam(req.query.limit), 10) || 100,
+      200
+    );
 
     let stories = all;
     if (topic !== 'all') stories = stories.filter((s) => s.topic === topic);
@@ -56,31 +70,35 @@ app.get('/api/news', async (req, res) => {
     }
     if (query) stories = stories.filter((s) => matchesQuery(s, query));
 
-    res.json({
+    const body: NewsResponse = {
       stories: stories.slice(0, limit),
       total: stories.length,
       meta: getMeta(),
-    });
+    };
+    res.json(body);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: errorMessage(error) });
   }
 });
 
 app.get('/api/meta', (_req, res) => res.json(getMeta()));
 
 app.get('/api/sources', (_req, res) => {
-  res.json({
+  const body: SourcesResponse = {
     sources: SOURCES.map(({ id, name, url }) => ({ id, name, url })),
     topics: TOPICS,
-  });
+  };
+  res.json(body);
 });
 
 app.post('/api/refresh', async (_req, res) => {
   try {
     await refresh({ force: true });
-    res.json({ ok: true, meta: getMeta() });
+    const body: RefreshResponse = { ok: true, meta: getMeta() };
+    res.json(body);
   } catch (error) {
-    res.status(500).json({ ok: false, error: error.message });
+    const body: RefreshResponse = { ok: false, error: errorMessage(error) };
+    res.status(500).json(body);
   }
 });
 

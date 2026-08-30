@@ -6,7 +6,13 @@
  * engine, and as a fallback when Claude omits a field.
  */
 
-export const TOPICS = [
+import type { Topic, TopicId } from '../../shared/types.ts';
+
+/**
+ * The topic vocabulary. `TopicId` lives in the shared contract, so adding a
+ * category here without teaching the client about it fails the build.
+ */
+export const TOPICS: Topic[] = [
   { id: 'transfer', label: 'Transfers' },
   { id: 'match', label: 'Match' },
   { id: 'injury', label: 'Injuries' },
@@ -16,7 +22,14 @@ export const TOPICS = [
   { id: 'other', label: 'Other' },
 ];
 
-const TOPIC_RULES = [
+interface TopicRule {
+  id: TopicId;
+  /** Higher weight wins ties between categories that both match. */
+  weight: number;
+  re: RegExp;
+}
+
+const TOPIC_RULES: TopicRule[] = [
   // Highest weight: a player's career history mentions transfers and goals in
   // passing, so without this a court case reads as a transfer story.
   {
@@ -53,7 +66,13 @@ const TOPIC_RULES = [
 
 // Order matters — the first match wins, so the more specific entries come
 // first (a Women's Champions League tie should read as women's football).
-const COMPETITIONS = [
+interface Competition {
+  id: string;
+  label: string;
+  re: RegExp;
+}
+
+const COMPETITIONS: Competition[] = [
   // A bare "women's" matches any women's sport — anchor it to football.
   { id: 'wsl', label: "Women's football", re: /\b(?:wsl\b|women'?s super league|women'?s (?:football|world cup|euros?|champions league))\b/i },
   { id: 'premier-league', label: 'Premier League', re: /\bpremier league\b|\bepl\b/i },
@@ -72,8 +91,8 @@ const COMPETITIONS = [
   { id: 'international', label: 'International', re: /\b(?:world cup|euro 20\d\d|nations league|qualifier|friendly international)\b/i },
 ];
 
-export function classifyTopic(text = '') {
-  const scores = new Map();
+export function classifyTopic(text: string = ''): TopicId {
+  const scores = new Map<TopicId, number>();
 
   for (const { id, re, weight } of TOPIC_RULES) {
     re.lastIndex = 0;
@@ -85,12 +104,18 @@ export function classifyTopic(text = '') {
   return [...scores.entries()].sort((a, b) => b[1] - a[1])[0][0];
 }
 
-export function classifyCompetition(text = '') {
+export function classifyCompetition(text: string = ''): string | null {
   const found = COMPETITIONS.find(({ re }) => re.test(text));
   return found ? found.label : null;
 }
 
-export function normaliseTopic(value) {
-  const id = String(value ?? '').toLowerCase().trim();
-  return TOPICS.some((t) => t.id === id) ? id : 'other';
+/**
+ * Narrows an untrusted string — Claude's `topic` field — to a known topic id,
+ * falling back to 'other' for anything unrecognised.
+ */
+export function normaliseTopic(value: unknown): TopicId {
+  const id = String(value ?? '')
+    .toLowerCase()
+    .trim();
+  return TOPICS.some((t) => t.id === id) ? (id as TopicId) : 'other';
 }
